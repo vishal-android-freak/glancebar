@@ -7,10 +7,10 @@ A customizable statusline for [Claude Code](https://claude.com/product/claude-co
 
 ## Features
 
-- **Session info** - Model name, cost, context usage, and session duration
+- **Session info** - Project name, git branch, model, cost, and context usage
 - **Calendar events** - Upcoming events from multiple Google accounts
 - **Health reminders** - Water, stretch, and eye break reminders
-- **Color-coded** - Events by account, context usage by percentage
+- **Color-coded** - Everything has distinct colors for quick scanning
 - **Fully configurable** via CLI
 - **Cross-platform** support (Windows, macOS, Linux)
 
@@ -151,13 +151,15 @@ glancebar config --reset
 
 Example output:
 ```
-Opus | $0.12 | 9.7k/200k (5%) | In 15m: Team Standup (work)
+glancebar | main* | Opus | $0.12 | 9.7k/200k (5%) | In 15m: Team Standup (work)
 ```
 
 ### Session Info (from Claude Code)
 
 | Field | Color | Example |
 |-------|-------|---------|
+| Project name | Blue | `glancebar`, `my-app` |
+| Git branch | Magenta | `main`, `feature-x*` (asterisk = uncommitted changes) |
 | Model name | Yellow | `Opus`, `Sonnet` |
 | Cost | Green | `$0.01`, `$0.1234` |
 | Context usage | Green/Yellow/Red | `9.7k/200k (5%)` |

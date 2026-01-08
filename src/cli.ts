@@ -792,6 +792,10 @@ function getRandomReminder(config: Config): string | null {
 interface ClaudeCodeStatus {
   model?: { display_name?: string };
   cost?: { total_cost_usd?: number };
+  cwd?: string;
+  workspace?: {
+    project_dir?: string;
+  };
   context_window?: {
     context_window_size?: number;
     current_usage?: {
@@ -801,6 +805,39 @@ interface ClaudeCodeStatus {
       cache_read_input_tokens?: number;
     };
   };
+}
+
+function getGitBranch(cwd?: string): string | null {
+  try {
+    const { execSync } = require("child_process");
+    const branch = execSync("git rev-parse --abbrev-ref HEAD", {
+      cwd: cwd || process.cwd(),
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+
+    // Check if there are uncommitted changes
+    let isDirty = false;
+    try {
+      const status = execSync("git status --porcelain", {
+        cwd: cwd || process.cwd(),
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+      }).trim();
+      isDirty = status.length > 0;
+    } catch {}
+
+    return isDirty ? `${branch}*` : branch;
+  } catch {
+    return null;
+  }
+}
+
+function getProjectName(projectDir?: string): string | null {
+  if (!projectDir) return null;
+  // Extract the last part of the path as project name
+  const parts = projectDir.replace(/\\/g, "/").split("/").filter(Boolean);
+  return parts.length > 0 ? parts[parts.length - 1] : null;
 }
 
 async function readStdinJson(): Promise<ClaudeCodeStatus | null> {
@@ -820,6 +857,18 @@ async function readStdinJson(): Promise<ClaudeCodeStatus | null> {
 
 function formatSessionInfo(status: ClaudeCodeStatus): string {
   const parts: string[] = [];
+
+  // Project name
+  const projectName = getProjectName(status.workspace?.project_dir);
+  if (projectName) {
+    parts.push(`${COLORS.brightBlue}${projectName}${COLORS.reset}`);
+  }
+
+  // Git branch
+  const gitBranch = getGitBranch(status.cwd || status.workspace?.project_dir);
+  if (gitBranch) {
+    parts.push(`${COLORS.magenta}${gitBranch}${COLORS.reset}`);
+  }
 
   // Model name
   if (status.model?.display_name) {
