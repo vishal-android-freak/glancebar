@@ -1,6 +1,6 @@
 {
   "name": "@naarang/glancebar",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A customizable statusline for Claude Code - display calendar events, tasks, and more at a glance",
   "author": "Vishal Dubey",
   "license": "MIT",
@@ -9,7 +9,7 @@
     "access": "public"
   },
   "bin": {
-    "glancebar": "./src/cli.ts"
+    "glancebar": "src/cli.ts"
   },
   "files": [
     "src/cli.ts",
@@ -37,7 +37,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/vishal-android-freak/glancebar"
+    "url": "git+https://github.com/vishal-android-freak/glancebar.git"
   },
   "os": [
     "darwin",

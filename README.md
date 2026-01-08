@@ -1,7 +1,7 @@
 # @naarang/glancebar
 
-[![npm version](https://img.shields.io/npm/v/@naarang/glancebar.svg)](https://www.npmjs.com/package/@naarang/glancebar)
-[![license](https://img.shields.io/npm/l/@naarang/glancebar.svg)](https://github.com/vishal-android-freak/glancebar/blob/main/LICENSE)
+[![npm version](https://img.shields.io/npm/v/%40naarang%2Fglancebar)](https://www.npmjs.com/package/@naarang/glancebar)
+[![license](https://img.shields.io/github/license/vishal-android-freak/glancebar)](https://github.com/vishal-android-freak/glancebar/blob/main/LICENSE)
 
 A customizable statusline for [Claude Code](https://claude.ai/claude-code) - display calendar events, tasks, and more at a glance.
 
