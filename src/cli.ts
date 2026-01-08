@@ -789,15 +789,90 @@ function getRandomReminder(config: Config): string | null {
   return randomPicker();
 }
 
-async function outputStatusline() {
-  // Consume stdin (Claude Code sends JSON)
+interface ClaudeCodeStatus {
+  model?: { display_name?: string };
+  cost?: { total_cost_usd?: number };
+  context_window?: {
+    context_window_size?: number;
+    current_usage?: {
+      input_tokens?: number;
+      output_tokens?: number;
+      cache_creation_input_tokens?: number;
+      cache_read_input_tokens?: number;
+    };
+  };
+}
+
+async function readStdinJson(): Promise<ClaudeCodeStatus | null> {
   try {
-    for await (const _ of Bun.stdin.stream()) break;
-  } catch {}
+    const chunks: Uint8Array[] = [];
+    for await (const chunk of Bun.stdin.stream()) {
+      chunks.push(chunk);
+    }
+    if (chunks.length === 0) return null;
+    const text = Buffer.concat(chunks).toString("utf-8").trim();
+    if (!text) return null;
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+function formatSessionInfo(status: ClaudeCodeStatus): string {
+  const parts: string[] = [];
+
+  // Model name
+  if (status.model?.display_name) {
+    parts.push(`${COLORS.brightYellow}${status.model.display_name}${COLORS.reset}`);
+  }
+
+  // Cost
+  if (status.cost?.total_cost_usd !== undefined) {
+    const cost = status.cost.total_cost_usd;
+    const costStr = cost < 0.01 ? `$${cost.toFixed(4)}` : `$${cost.toFixed(2)}`;
+    parts.push(`${COLORS.green}${costStr}${COLORS.reset}`);
+  }
+
+  // Context usage (using current_usage for accurate context window state)
+  if (status.context_window?.current_usage && status.context_window?.context_window_size) {
+    const usage = status.context_window.current_usage;
+    // Sum all token types for total context usage
+    const totalUsed =
+      (usage.input_tokens || 0) +
+      (usage.output_tokens || 0) +
+      (usage.cache_creation_input_tokens || 0) +
+      (usage.cache_read_input_tokens || 0);
+    const windowSize = status.context_window.context_window_size;
+    const percentage = Math.round((totalUsed / windowSize) * 100);
+    const usedK = (totalUsed / 1000).toFixed(1);
+    const windowK = Math.round(windowSize / 1000);
+
+    // Color based on usage: green < 50%, yellow 50-80%, red > 80%
+    let color = COLORS.green;
+    if (percentage >= 80) color = COLORS.red;
+    else if (percentage >= 50) color = COLORS.yellow;
+
+    parts.push(`${color}${usedK}k/${windowK}k (${percentage}%)${COLORS.reset}`);
+  }
+
+  return parts.join(" | ");
+}
+
+async function outputStatusline() {
+  // Read and parse stdin from Claude Code
+  const status = await readStdinJson();
 
   try {
     const config = loadConfig();
     const parts: string[] = [];
+
+    // Add session info from Claude Code
+    if (status) {
+      const sessionInfo = formatSessionInfo(status);
+      if (sessionInfo) {
+        parts.push(sessionInfo);
+      }
+    }
 
     // Check for health reminder (water, stretch, eye break)
     const reminder = getRandomReminder(config);

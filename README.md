@@ -7,12 +7,12 @@ A customizable statusline for [Claude Code](https://claude.com/product/claude-co
 
 ## Features
 
-- Display upcoming calendar events from multiple Google accounts
-- Color-coded events per account
-- Countdown display for imminent events
-- Water break reminders to stay hydrated
-- Fully configurable via CLI
-- Cross-platform support (Windows, macOS, Linux)
+- **Session info** - Model name, cost, context usage, and session duration
+- **Calendar events** - Upcoming events from multiple Google accounts
+- **Health reminders** - Water, stretch, and eye break reminders
+- **Color-coded** - Events by account, context usage by percentage
+- **Fully configurable** via CLI
+- **Cross-platform** support (Windows, macOS, Linux)
 
 ## Requirements
 
@@ -149,17 +149,40 @@ glancebar config --reset
 
 ## Display Format
 
+Example output:
+```
+Opus | $0.12 | 9.7k/200k (5%) | In 15m: Team Standup (work)
+```
+
+### Session Info (from Claude Code)
+
+| Field | Color | Example |
+|-------|-------|---------|
+| Model name | Yellow | `Opus`, `Sonnet` |
+| Cost | Green | `$0.01`, `$0.1234` |
+| Context usage | Green/Yellow/Red | `9.7k/200k (5%)` |
+
+Context usage color changes based on percentage:
+- **Green**: < 50%
+- **Yellow**: 50-80%
+- **Red**: > 80%
+
+### Calendar Events
+
 | State | Format | Example |
 |-------|--------|---------|
 | Upcoming (within threshold) | `In Xm: Title (account)` | `In 15m: Team Standup (work)` |
 | Current | `Now: Title (account)` | `Now: Team Standup (work)` |
 | Later | `HH:MM AM/PM: Title (account)` | `2:30 PM: Meeting (work)` |
 | No events | `No upcoming events` | |
-| Water reminder | Random hydration message (cyan) | `Stay hydrated! Drink some water` |
-| Stretch reminder | Random stretch message (green) | `Time to stretch! Stand up and move` |
-| Eye break reminder | Random eye rest message (magenta) | `Eye break! Look 20ft away for 20s` |
 
-Events are color-coded by account. Health reminders appear randomly (~30% chance) in their respective colors.
+### Health Reminders (~30% chance)
+
+| Type | Color | Example |
+|------|-------|---------|
+| Water | Cyan | `Stay hydrated! Drink some water` |
+| Stretch | Green | `Time to stretch! Stand up and move` |
+| Eye break | Magenta | `Eye break! Look 20ft away for 20s` |
 
 ## Configuration
 
