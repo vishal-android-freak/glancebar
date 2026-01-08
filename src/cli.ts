@@ -434,6 +434,20 @@ function formatCountdown(minutes: number): string {
   return mins === 0 ? `In ${hours}h` : `In ${hours}h${mins}m`;
 }
 
+function getMeetingWarning(event: CalendarEvent | null): string | null {
+  if (!event) return null;
+
+  const now = new Date();
+  const minutesUntil = Math.round((event.start.getTime() - now.getTime()) / 60000);
+
+  // Warning when meeting is 5 minutes or less away
+  if (minutesUntil > 0 && minutesUntil <= 5) {
+    return `${COLORS.brightRed}Meeting in ${minutesUntil}m - wrap up!${COLORS.reset}`;
+  }
+
+  return null;
+}
+
 function formatTime(date: Date): string {
   const hours = date.getHours();
   const minutes = date.getMinutes();
@@ -791,7 +805,11 @@ function getRandomReminder(config: Config): string | null {
 
 interface ClaudeCodeStatus {
   model?: { display_name?: string };
-  cost?: { total_cost_usd?: number };
+  cost?: {
+    total_cost_usd?: number;
+    total_lines_added?: number;
+    total_lines_removed?: number;
+  };
   cwd?: string;
   workspace?: {
     project_dir?: string;
@@ -882,6 +900,14 @@ function formatSessionInfo(status: ClaudeCodeStatus): string {
     parts.push(`${COLORS.green}${costStr}${COLORS.reset}`);
   }
 
+  // Lines changed
+  const linesAdded = status.cost?.total_lines_added || 0;
+  const linesRemoved = status.cost?.total_lines_removed || 0;
+  if (linesAdded > 0 || linesRemoved > 0) {
+    const linesStr = `${COLORS.green}+${linesAdded}${COLORS.reset} ${COLORS.red}-${linesRemoved}${COLORS.reset}`;
+    parts.push(linesStr);
+  }
+
   // Context usage (using current_usage for accurate context window state)
   if (status.context_window?.current_usage && status.context_window?.context_window_size) {
     const usage = status.context_window.current_usage;
@@ -933,6 +959,12 @@ async function outputStatusline() {
     if (config.accounts.length > 0) {
       const events = await getUpcomingEvents(config);
       const event = getCurrentOrNextEvent(events);
+
+      // Check for meeting warning (within 5 minutes)
+      const meetingWarning = getMeetingWarning(event);
+      if (meetingWarning) {
+        parts.push(meetingWarning);
+      }
 
       if (event) {
         parts.push(formatEvent(event, config));

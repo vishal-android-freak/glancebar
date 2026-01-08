@@ -151,7 +151,7 @@ glancebar config --reset
 
 Example output:
 ```
-glancebar | main* | Opus | $0.12 | 9.7k/200k (5%) | In 15m: Team Standup (work)
+glancebar | main* | Opus | $0.12 | +156 -23 | 9.7k/200k (5%) | In 15m: Team Standup (work)
 ```
 
 ### Session Info (from Claude Code)
@@ -162,6 +162,7 @@ glancebar | main* | Opus | $0.12 | 9.7k/200k (5%) | In 15m: Team Standup (work)
 | Git branch | Magenta | `main`, `feature-x*` (asterisk = uncommitted changes) |
 | Model name | Yellow | `Opus`, `Sonnet` |
 | Cost | Green | `$0.01`, `$0.1234` |
+| Lines changed | Green/Red | `+156 -23` |
 | Context usage | Green/Yellow/Red | `9.7k/200k (5%)` |
 
 Context usage color changes based on percentage:
@@ -173,6 +174,7 @@ Context usage color changes based on percentage:
 
 | State | Format | Example |
 |-------|--------|---------|
+| **Meeting warning** | Red alert when ≤5m away | `Meeting in 3m - wrap up!` |
 | Upcoming (within threshold) | `In Xm: Title (account)` | `In 15m: Team Standup (work)` |
 | Current | `Now: Title (account)` | `Now: Team Standup (work)` |
 | Later | `HH:MM AM/PM: Title (account)` | `2:30 PM: Meeting (work)` |
