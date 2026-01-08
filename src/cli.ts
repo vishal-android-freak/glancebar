@@ -16,6 +16,8 @@ interface Config {
   countdownThresholdMinutes: number;
   maxTitleLength: number;
   waterReminderEnabled: boolean;
+  stretchReminderEnabled: boolean;
+  eyeReminderEnabled: boolean;
 }
 
 const COLORS: Record<string, string> = {
@@ -47,6 +49,8 @@ const DEFAULT_CONFIG: Config = {
   countdownThresholdMinutes: 60,
   maxTitleLength: 120,
   waterReminderEnabled: true,
+  stretchReminderEnabled: true,
+  eyeReminderEnabled: true,
 };
 
 const WATER_REMINDERS = [
@@ -58,6 +62,26 @@ const WATER_REMINDERS = [
   "Don't forget to drink water!",
   "Hydrate yourself! Take a sip",
   "Quick reminder: Drink water!",
+];
+
+const STRETCH_REMINDERS = [
+  "Time to stretch! Stand up and move",
+  "Stretch break! Roll your shoulders",
+  "Stand up and stretch your legs",
+  "Posture check! Sit up straight",
+  "Take a quick stretch break",
+  "Move your body! Quick stretch",
+  "Stretch your neck and shoulders",
+  "Stand up! Your body will thank you",
+];
+
+const EYE_REMINDERS = [
+  "Eye break! Look 20ft away for 20s",
+  "Rest your eyes - look at something distant",
+  "20-20-20: Look away from screen",
+  "Give your eyes a break!",
+  "Look away from the screen for a moment",
+  "Eye rest time! Focus on something far",
 ];
 
 function getConfigDir(): string {
@@ -440,13 +464,15 @@ Usage:
   glancebar config --max-title <length>          Set max title length (default: 120)
   glancebar config --show-calendar <true|false>  Show calendar name (default: true)
   glancebar config --water-reminder <true|false> Enable/disable water reminders (default: true)
+  glancebar config --stretch-reminder <true|false> Enable/disable stretch reminders (default: true)
+  glancebar config --eye-reminder <true|false>   Enable/disable eye break reminders (default: true)
   glancebar config --reset           Reset to default configuration
   glancebar setup                    Show setup instructions
 
 Examples:
   glancebar auth --add user@gmail.com
   glancebar config --lookahead 12
-  glancebar config --water-reminder true
+  glancebar config --stretch-reminder false
 
 Config location: ${getConfigDir()}
 `);
@@ -681,6 +707,34 @@ function handleConfig(args: string[]) {
     return;
   }
 
+  // Handle --stretch-reminder
+  const stretchReminderIndex = args.indexOf("--stretch-reminder");
+  if (stretchReminderIndex !== -1) {
+    const value = args[stretchReminderIndex + 1]?.toLowerCase();
+    if (value !== "true" && value !== "false") {
+      console.error("Error: --stretch-reminder must be 'true' or 'false'");
+      process.exit(1);
+    }
+    config.stretchReminderEnabled = value === "true";
+    saveConfig(config);
+    console.log(`Stretch reminder ${value === "true" ? "enabled" : "disabled"}`);
+    return;
+  }
+
+  // Handle --eye-reminder
+  const eyeReminderIndex = args.indexOf("--eye-reminder");
+  if (eyeReminderIndex !== -1) {
+    const value = args[eyeReminderIndex + 1]?.toLowerCase();
+    if (value !== "true" && value !== "false") {
+      console.error("Error: --eye-reminder must be 'true' or 'false'");
+      process.exit(1);
+    }
+    config.eyeReminderEnabled = value === "true";
+    saveConfig(config);
+    console.log(`Eye break reminder ${value === "true" ? "enabled" : "disabled"}`);
+    return;
+  }
+
   // Show current config
   console.log(`
 Glancebar Configuration
@@ -696,19 +750,43 @@ Calendar Settings:
 
 Reminders:
   Water reminder:      ${config.waterReminderEnabled ? "enabled" : "disabled"}
+  Stretch reminder:    ${config.stretchReminderEnabled ? "enabled" : "disabled"}
+  Eye break reminder:  ${config.eyeReminderEnabled ? "enabled" : "disabled"}
 `);
 }
 
-function shouldShowWaterReminder(config: Config): boolean {
-  if (!config.waterReminderEnabled) return false;
+function getRandomReminder(config: Config): string | null {
+  const enabledReminders: Array<() => string> = [];
 
-  // ~30% chance to show water reminder
-  return Math.random() < 0.3;
-}
+  if (config.waterReminderEnabled) {
+    enabledReminders.push(() => {
+      const reminder = WATER_REMINDERS[Math.floor(Math.random() * WATER_REMINDERS.length)];
+      return `${COLORS.brightCyan}${reminder}${COLORS.reset}`;
+    });
+  }
 
-function getWaterReminder(): string {
-  const reminder = WATER_REMINDERS[Math.floor(Math.random() * WATER_REMINDERS.length)];
-  return `${COLORS.brightCyan}${reminder}${COLORS.reset}`;
+  if (config.stretchReminderEnabled) {
+    enabledReminders.push(() => {
+      const reminder = STRETCH_REMINDERS[Math.floor(Math.random() * STRETCH_REMINDERS.length)];
+      return `${COLORS.brightGreen}${reminder}${COLORS.reset}`;
+    });
+  }
+
+  if (config.eyeReminderEnabled) {
+    enabledReminders.push(() => {
+      const reminder = EYE_REMINDERS[Math.floor(Math.random() * EYE_REMINDERS.length)];
+      return `${COLORS.brightMagenta}${reminder}${COLORS.reset}`;
+    });
+  }
+
+  if (enabledReminders.length === 0) return null;
+
+  // ~30% chance to show any reminder
+  if (Math.random() >= 0.3) return null;
+
+  // Pick a random reminder type from enabled ones
+  const randomPicker = enabledReminders[Math.floor(Math.random() * enabledReminders.length)];
+  return randomPicker();
 }
 
 async function outputStatusline() {
@@ -721,9 +799,10 @@ async function outputStatusline() {
     const config = loadConfig();
     const parts: string[] = [];
 
-    // Check for water reminder first
-    if (shouldShowWaterReminder(config)) {
-      parts.push(getWaterReminder());
+    // Check for health reminder (water, stretch, eye break)
+    const reminder = getRandomReminder(config);
+    if (reminder) {
+      parts.push(reminder);
     }
 
     // Get calendar events

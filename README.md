@@ -138,8 +138,10 @@ glancebar config --max-title 80
 # Toggle calendar name display
 glancebar config --show-calendar false
 
-# Enable/disable water reminders
+# Enable/disable health reminders
 glancebar config --water-reminder true
+glancebar config --stretch-reminder true
+glancebar config --eye-reminder true
 
 # Reset to defaults
 glancebar config --reset
@@ -153,9 +155,11 @@ glancebar config --reset
 | Current | `Now: Title (account)` | `Now: Team Standup (work)` |
 | Later | `HH:MM AM/PM: Title (account)` | `2:30 PM: Meeting (work)` |
 | No events | `No upcoming events` | |
-| Water reminder | Random hydration message | `Stay hydrated! Drink some water` |
+| Water reminder | Random hydration message (cyan) | `Stay hydrated! Drink some water` |
+| Stretch reminder | Random stretch message (green) | `Time to stretch! Stand up and move` |
+| Eye break reminder | Random eye rest message (magenta) | `Eye break! Look 20ft away for 20s` |
 
-Events are color-coded by account (cyan, magenta, green, orange, blue, pink, yellow, purple).
+Events are color-coded by account. Health reminders appear randomly (~30% chance) in their respective colors.
 
 ## Configuration
 
@@ -177,7 +181,9 @@ All configuration is stored in `~/.glancebar/`:
 | `countdownThresholdMinutes` | 60 | Minutes threshold for countdown display |
 | `maxTitleLength` | 120 | Maximum event title length |
 | `showCalendarName` | true | Show account name after event |
-| `waterReminderEnabled` | true | Enable random water break reminders (~30% chance) |
+| `waterReminderEnabled` | true | Enable random water break reminders |
+| `stretchReminderEnabled` | true | Enable random stretch/posture reminders |
+| `eyeReminderEnabled` | true | Enable random eye break reminders (20-20-20 rule) |
 
 ## Building from Source
 
