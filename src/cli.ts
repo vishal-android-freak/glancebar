@@ -16,7 +16,6 @@ interface Config {
   countdownThresholdMinutes: number;
   maxTitleLength: number;
   waterReminderEnabled: boolean;
-  waterReminderIntervalMinutes: number;
 }
 
 const COLORS: Record<string, string> = {
@@ -48,7 +47,6 @@ const DEFAULT_CONFIG: Config = {
   countdownThresholdMinutes: 60,
   maxTitleLength: 120,
   waterReminderEnabled: true,
-  waterReminderIntervalMinutes: 30,
 };
 
 const WATER_REMINDERS = [
@@ -442,14 +440,13 @@ Usage:
   glancebar config --max-title <length>          Set max title length (default: 120)
   glancebar config --show-calendar <true|false>  Show calendar name (default: true)
   glancebar config --water-reminder <true|false> Enable/disable water reminders (default: true)
-  glancebar config --water-interval <mins>       Set water reminder interval (default: 30)
   glancebar config --reset           Reset to default configuration
   glancebar setup                    Show setup instructions
 
 Examples:
   glancebar auth --add user@gmail.com
   glancebar config --lookahead 12
-  glancebar config --water-interval 45
+  glancebar config --water-reminder true
 
 Config location: ${getConfigDir()}
 `);
@@ -684,20 +681,6 @@ function handleConfig(args: string[]) {
     return;
   }
 
-  // Handle --water-interval
-  const waterIntervalIndex = args.indexOf("--water-interval");
-  if (waterIntervalIndex !== -1) {
-    const value = parseInt(args[waterIntervalIndex + 1], 10);
-    if (isNaN(value) || value < 5 || value > 120) {
-      console.error("Error: water-interval must be between 5 and 120 minutes");
-      process.exit(1);
-    }
-    config.waterReminderIntervalMinutes = value;
-    saveConfig(config);
-    console.log(`Water reminder interval set to ${value} minutes`);
-    return;
-  }
-
   // Show current config
   console.log(`
 Glancebar Configuration
@@ -713,18 +696,14 @@ Calendar Settings:
 
 Reminders:
   Water reminder:      ${config.waterReminderEnabled ? "enabled" : "disabled"}
-  Water interval:      ${config.waterReminderIntervalMinutes} minutes
 `);
 }
 
 function shouldShowWaterReminder(config: Config): boolean {
   if (!config.waterReminderEnabled) return false;
 
-  const now = new Date();
-  const minutes = now.getHours() * 60 + now.getMinutes();
-
-  // Show water reminder if current minute falls on the interval
-  return minutes % config.waterReminderIntervalMinutes === 0;
+  // ~30% chance to show water reminder
+  return Math.random() < 0.3;
 }
 
 function getWaterReminder(): string {

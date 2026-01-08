@@ -141,9 +141,6 @@ glancebar config --show-calendar false
 # Enable/disable water reminders
 glancebar config --water-reminder true
 
-# Set water reminder interval (in minutes)
-glancebar config --water-interval 45
-
 # Reset to defaults
 glancebar config --reset
 ```
@@ -180,8 +177,7 @@ All configuration is stored in `~/.glancebar/`:
 | `countdownThresholdMinutes` | 60 | Minutes threshold for countdown display |
 | `maxTitleLength` | 120 | Maximum event title length |
 | `showCalendarName` | true | Show account name after event |
-| `waterReminderEnabled` | false | Enable water break reminders |
-| `waterReminderIntervalMinutes` | 45 | Minutes between water reminders |
+| `waterReminderEnabled` | true | Enable random water break reminders (~30% chance) |
 
 ## Building from Source
 
