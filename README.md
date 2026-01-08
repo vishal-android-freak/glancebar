@@ -8,6 +8,7 @@ A customizable statusline for [Claude Code](https://claude.com/product/claude-co
 ## Features
 
 - **Session info** - Project name, git branch, model, cost, lines changed, and context usage
+- **System stats** - CPU and memory usage (optional)
 - **Calendar events** - Upcoming events from multiple Google accounts
 - **Meeting warnings** - Red alert when a meeting is 5 minutes away
 - **Health reminders** - Water, stretch, and eye break reminders
@@ -144,6 +145,10 @@ glancebar config --water-reminder true
 glancebar config --stretch-reminder true
 glancebar config --eye-reminder true
 
+# Enable/disable system stats
+glancebar config --cpu-usage true
+glancebar config --memory-usage true
+
 # Reset to defaults
 glancebar config --reset
 ```
@@ -165,6 +170,8 @@ glancebar | main* | Opus | $0.12 | +156 -23 | 9.7k/200k (5%) | In 15m: Team Stan
 | Cost | Green | `$0.01`, `$0.1234` |
 | Lines changed | Green/Red | `+156 -23` |
 | Context usage | Green/Yellow/Red | `9.7k/200k (5%)` |
+| CPU usage | Green/Yellow/Red | `CPU 12%` |
+| Memory usage | Green/Yellow/Red | `Mem 8.2/16.0GB` |
 
 Context usage color changes based on percentage:
 - **Green**: < 50%
@@ -212,6 +219,8 @@ All configuration is stored in `~/.glancebar/`:
 | `waterReminderEnabled` | true | Enable random water break reminders |
 | `stretchReminderEnabled` | true | Enable random stretch/posture reminders |
 | `eyeReminderEnabled` | true | Enable random eye break reminders (20-20-20 rule) |
+| `showCpuUsage` | false | Show CPU usage percentage |
+| `showMemoryUsage` | false | Show memory usage |
 
 ## Building from Source
 

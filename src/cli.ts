@@ -18,6 +18,8 @@ interface Config {
   waterReminderEnabled: boolean;
   stretchReminderEnabled: boolean;
   eyeReminderEnabled: boolean;
+  showCpuUsage: boolean;
+  showMemoryUsage: boolean;
 }
 
 const COLORS: Record<string, string> = {
@@ -51,6 +53,8 @@ const DEFAULT_CONFIG: Config = {
   waterReminderEnabled: true,
   stretchReminderEnabled: true,
   eyeReminderEnabled: true,
+  showCpuUsage: false,
+  showMemoryUsage: false,
 };
 
 const WATER_REMINDERS = [
@@ -448,6 +452,61 @@ function getMeetingWarning(event: CalendarEvent | null): string | null {
   return null;
 }
 
+// ============================================================================
+// System Stats
+// ============================================================================
+
+function getCpuUsage(): string | null {
+  try {
+    const os = require("os");
+    const cpus = os.cpus();
+
+    let totalIdle = 0;
+    let totalTick = 0;
+
+    for (const cpu of cpus) {
+      for (const type in cpu.times) {
+        totalTick += cpu.times[type as keyof typeof cpu.times];
+      }
+      totalIdle += cpu.times.idle;
+    }
+
+    const usage = Math.round(100 - (totalIdle / totalTick) * 100);
+
+    // Color based on usage
+    let color = COLORS.green;
+    if (usage >= 80) color = COLORS.red;
+    else if (usage >= 50) color = COLORS.yellow;
+
+    return `${color}CPU ${usage}%${COLORS.reset}`;
+  } catch {
+    return null;
+  }
+}
+
+function getMemoryUsage(): string | null {
+  try {
+    const os = require("os");
+    const totalMem = os.totalmem();
+    const freeMem = os.freemem();
+    const usedMem = totalMem - freeMem;
+    const usagePercent = Math.round((usedMem / totalMem) * 100);
+
+    // Format used memory
+    const usedGB = (usedMem / (1024 * 1024 * 1024)).toFixed(1);
+    const totalGB = (totalMem / (1024 * 1024 * 1024)).toFixed(1);
+
+    // Color based on usage
+    let color = COLORS.green;
+    if (usagePercent >= 80) color = COLORS.red;
+    else if (usagePercent >= 50) color = COLORS.yellow;
+
+    return `${color}Mem ${usedGB}/${totalGB}GB${COLORS.reset}`;
+  } catch {
+    return null;
+  }
+}
+
 function formatTime(date: Date): string {
   const hours = date.getHours();
   const minutes = date.getMinutes();
@@ -480,6 +539,8 @@ Usage:
   glancebar config --water-reminder <true|false> Enable/disable water reminders (default: true)
   glancebar config --stretch-reminder <true|false> Enable/disable stretch reminders (default: true)
   glancebar config --eye-reminder <true|false>   Enable/disable eye break reminders (default: true)
+  glancebar config --cpu-usage <true|false>      Show CPU usage (default: false)
+  glancebar config --memory-usage <true|false>   Show memory usage (default: false)
   glancebar config --reset           Reset to default configuration
   glancebar setup                    Show setup instructions
 
@@ -749,6 +810,34 @@ function handleConfig(args: string[]) {
     return;
   }
 
+  // Handle --cpu-usage
+  const cpuUsageIndex = args.indexOf("--cpu-usage");
+  if (cpuUsageIndex !== -1) {
+    const value = args[cpuUsageIndex + 1]?.toLowerCase();
+    if (value !== "true" && value !== "false") {
+      console.error("Error: --cpu-usage must be 'true' or 'false'");
+      process.exit(1);
+    }
+    config.showCpuUsage = value === "true";
+    saveConfig(config);
+    console.log(`CPU usage display ${value === "true" ? "enabled" : "disabled"}`);
+    return;
+  }
+
+  // Handle --memory-usage
+  const memoryUsageIndex = args.indexOf("--memory-usage");
+  if (memoryUsageIndex !== -1) {
+    const value = args[memoryUsageIndex + 1]?.toLowerCase();
+    if (value !== "true" && value !== "false") {
+      console.error("Error: --memory-usage must be 'true' or 'false'");
+      process.exit(1);
+    }
+    config.showMemoryUsage = value === "true";
+    saveConfig(config);
+    console.log(`Memory usage display ${value === "true" ? "enabled" : "disabled"}`);
+    return;
+  }
+
   // Show current config
   console.log(`
 Glancebar Configuration
@@ -766,6 +855,10 @@ Reminders:
   Water reminder:      ${config.waterReminderEnabled ? "enabled" : "disabled"}
   Stretch reminder:    ${config.stretchReminderEnabled ? "enabled" : "disabled"}
   Eye break reminder:  ${config.eyeReminderEnabled ? "enabled" : "disabled"}
+
+System Stats:
+  CPU usage:           ${config.showCpuUsage ? "enabled" : "disabled"}
+  Memory usage:        ${config.showMemoryUsage ? "enabled" : "disabled"}
 `);
 }
 
@@ -947,6 +1040,16 @@ async function outputStatusline() {
       if (sessionInfo) {
         parts.push(sessionInfo);
       }
+    }
+
+    // Add system stats if enabled
+    if (config.showCpuUsage) {
+      const cpu = getCpuUsage();
+      if (cpu) parts.push(cpu);
+    }
+    if (config.showMemoryUsage) {
+      const mem = getMemoryUsage();
+      if (mem) parts.push(mem);
     }
 
     // Check for health reminder (water, stretch, eye break)
