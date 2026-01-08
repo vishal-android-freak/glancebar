@@ -7,8 +7,9 @@ A customizable statusline for [Claude Code](https://claude.com/product/claude-co
 
 ## Features
 
-- **Session info** - Project name, git branch, model, cost, and context usage
+- **Session info** - Project name, git branch, model, cost, lines changed, and context usage
 - **Calendar events** - Upcoming events from multiple Google accounts
+- **Meeting warnings** - Red alert when a meeting is 5 minutes away
 - **Health reminders** - Water, stretch, and eye break reminders
 - **Color-coded** - Everything has distinct colors for quick scanning
 - **Fully configurable** via CLI
