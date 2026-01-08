@@ -75,10 +75,6 @@ function getTokensDir(): string {
   return join(getConfigDir(), "tokens");
 }
 
-function getCredentialsPath(): string {
-  return join(getConfigDir(), "credentials.json");
-}
-
 function ensureConfigDir(): void {
   const dir = getConfigDir();
   if (!existsSync(dir)) {
@@ -118,11 +114,15 @@ interface Credentials {
   web?: { client_id: string; client_secret: string };
 }
 
+function getCredentialsPath(): string {
+  return join(getConfigDir(), "credentials.json");
+}
+
 function loadCredentials(): Credentials {
   const credPath = getCredentialsPath();
   if (!existsSync(credPath)) {
     throw new Error(
-      `credentials.json not found at ${credPath}\n\nPlease download OAuth credentials from Google Cloud Console and save to:\n${credPath}`
+      `credentials.json not found at ${credPath}\n\nPlease download OAuth credentials from Google Cloud Console and save to:\n${credPath}\n\nRun 'glancebar setup' for detailed instructions.`
     );
   }
   return JSON.parse(readFileSync(credPath, "utf-8"));

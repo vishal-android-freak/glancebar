@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/%40naarang%2Fglancebar)](https://www.npmjs.com/package/@naarang/glancebar)
 [![license](https://img.shields.io/github/license/vishal-android-freak/glancebar)](https://github.com/vishal-android-freak/glancebar/blob/main/LICENSE)
 
-A customizable statusline for [Claude Code](https://claude.ai/claude-code) - display calendar events, tasks, and more at a glance.
+A customizable statusline for [Claude Code](https://claude.com/product/claude-code) - display calendar events, tasks, and more at a glance.
 
 ## Features
 
@@ -47,7 +47,7 @@ npm install -g @naarang/glancebar
 # 1. Run setup guide
 glancebar setup
 
-# 2. Add your Google account
+# 2. Add your Google account (after setting up credentials)
 glancebar auth --add your-email@gmail.com
 
 # 3. Test it
