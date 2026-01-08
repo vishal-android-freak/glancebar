@@ -1,0 +1,24 @@
+# Credentials and tokens (sensitive)
+credentials.json
+tokens/
+*.json
+!package.json
+
+# Config
+config.json
+
+# Build artifacts
+dist/
+
+# Development
+.git/
+.gitignore
+*.log
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
