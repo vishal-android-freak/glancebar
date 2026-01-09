@@ -888,8 +888,8 @@ function getRandomReminder(config: Config): string | null {
 
   if (enabledReminders.length === 0) return null;
 
-  // ~30% chance to show any reminder
-  if (Math.random() >= 0.3) return null;
+  // ~5% chance to show any reminder (reduced from 30% to be less intrusive)
+  if (Math.random() >= 0.05) return null;
 
   // Pick a random reminder type from enabled ones
   const randomPicker = enabledReminders[Math.floor(Math.random() * enabledReminders.length)];

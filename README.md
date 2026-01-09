@@ -188,7 +188,7 @@ Context usage color changes based on percentage:
 | Later | `HH:MM AM/PM: Title (account)` | `2:30 PM: Meeting (work)` |
 | No events | `No upcoming events` | |
 
-### Health Reminders (~30% chance)
+### Health Reminders (~5% chance)
 
 | Type | Color | Example |
 |------|-------|---------|
