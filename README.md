@@ -10,6 +10,7 @@ A customizable statusline for [Claude Code](https://claude.com/product/claude-co
 - **Session info** - Project name, git branch, model, cost, lines changed, and context usage
 - **System stats** - CPU and memory usage (optional)
 - **Calendar events** - Upcoming events from Google Calendar and Zoho Calendar
+- **Zoho Tasks** - Display top pending tasks from Zoho Mail
 - **Meeting warnings** - Red alert when a meeting is 5 minutes away
 - **Health reminders** - Water, stretch, and eye break reminders
 - **Color-coded** - Everything has distinct colors for quick scanning
@@ -205,6 +206,10 @@ glancebar config --eye-reminder true
 glancebar config --cpu-usage true
 glancebar config --memory-usage true
 
+# Enable/disable Zoho tasks display
+glancebar config --zoho-tasks true
+glancebar config --max-tasks 3
+
 # Reset to defaults
 glancebar config --reset
 ```
@@ -244,6 +249,16 @@ Context usage color changes based on percentage:
 | Later | `HH:MM AM/PM: Title (account)` | `2:30 PM: Meeting (work)` |
 | No events | `No upcoming events` | |
 
+### Zoho Tasks
+
+| State | Color | Example |
+|-------|-------|---------|
+| Overdue task | Red | `Overdue task title` |
+| High priority | Yellow | `High priority task` |
+| Normal task | White | `Normal task title` |
+
+Tasks are displayed as: `Tasks: Task 1, Task 2, Task 3`
+
 ### Health Reminders (~5% chance)
 
 | Type | Color | Example |
@@ -279,6 +294,8 @@ All configuration is stored in `~/.glancebar/`:
 | `eyeReminderEnabled` | true | Enable random eye break reminders (20-20-20 rule) |
 | `showCpuUsage` | false | Show CPU usage percentage |
 | `showMemoryUsage` | false | Show memory usage |
+| `showZohoTasks` | true | Show pending Zoho tasks |
+| `maxTasksToShow` | 3 | Maximum number of tasks to display |
 
 ## Building from Source
 

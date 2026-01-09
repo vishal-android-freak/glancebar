@@ -1,6 +1,6 @@
 {
   "name": "@naarang/glancebar",
-  "version": "1.0.6",
+  "version": "1.0.8",
   "description": "A customizable statusline for Claude Code - display calendar events, tasks, and more at a glance",
   "author": "Vishal Dubey",
   "license": "MIT",
@@ -13,6 +13,7 @@
   },
   "files": [
     "src/cli.ts",
+    "package.json",
     "README.md",
     "LICENSE"
   ],

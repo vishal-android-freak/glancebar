@@ -4,6 +4,13 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from "
 import { join, dirname } from "path";
 import { createServer, Server } from "http";
 import { createInterface } from "readline";
+import { fileURLToPath } from "url";
+
+// Get package version
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const packageJson = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf-8"));
+const VERSION = packageJson.version;
 
 // ============================================================================
 // Configuration
@@ -22,6 +29,8 @@ interface Config {
   eyeReminderEnabled: boolean;
   showCpuUsage: boolean;
   showMemoryUsage: boolean;
+  showZohoTasks: boolean;
+  maxTasksToShow: number;
 }
 
 interface ZohoAccount {
@@ -64,6 +73,8 @@ const DEFAULT_CONFIG: Config = {
   eyeReminderEnabled: true,
   showCpuUsage: false,
   showMemoryUsage: false,
+  showZohoTasks: true,
+  maxTasksToShow: 3,
 };
 
 const WATER_REMINDERS = [
@@ -160,18 +171,22 @@ interface GoogleCredentials {
 // Zoho OAuth Authentication
 // ============================================================================
 
-const ZOHO_SCOPES = ["ZohoCalendar.calendar.READ", "ZohoCalendar.event.READ"];
+const ZOHO_SCOPES = [
+  "ZohoCalendar.calendar.READ",
+  "ZohoCalendar.event.READ",
+  "ZohoMail.tasks.READ",
+];
 const ZOHO_REDIRECT_URI = "http://localhost:3000/callback";
 
 // Zoho datacenter mappings
-const ZOHO_DATACENTERS: Record<string, { accounts: string; api: string }> = {
-  "com": { accounts: "https://accounts.zoho.com", api: "https://calendar.zoho.com" },
-  "eu": { accounts: "https://accounts.zoho.eu", api: "https://calendar.zoho.eu" },
-  "in": { accounts: "https://accounts.zoho.in", api: "https://calendar.zoho.in" },
-  "com.au": { accounts: "https://accounts.zoho.com.au", api: "https://calendar.zoho.com.au" },
-  "com.cn": { accounts: "https://accounts.zoho.com.cn", api: "https://calendar.zoho.com.cn" },
-  "jp": { accounts: "https://accounts.zoho.jp", api: "https://calendar.zoho.jp" },
-  "zohocloud.ca": { accounts: "https://accounts.zohocloud.ca", api: "https://calendar.zohocloud.ca" },
+const ZOHO_DATACENTERS: Record<string, { accounts: string; calendar: string; mail: string }> = {
+  "com": { accounts: "https://accounts.zoho.com", calendar: "https://calendar.zoho.com", mail: "https://mail.zoho.com" },
+  "eu": { accounts: "https://accounts.zoho.eu", calendar: "https://calendar.zoho.eu", mail: "https://mail.zoho.eu" },
+  "in": { accounts: "https://accounts.zoho.in", calendar: "https://calendar.zoho.in", mail: "https://mail.zoho.in" },
+  "com.au": { accounts: "https://accounts.zoho.com.au", calendar: "https://calendar.zoho.com.au", mail: "https://mail.zoho.com.au" },
+  "com.cn": { accounts: "https://accounts.zoho.com.cn", calendar: "https://calendar.zoho.com.cn", mail: "https://mail.zoho.com.cn" },
+  "jp": { accounts: "https://accounts.zoho.jp", calendar: "https://calendar.zoho.jp", mail: "https://mail.zoho.jp" },
+  "zohocloud.ca": { accounts: "https://accounts.zohocloud.ca", calendar: "https://calendar.zohocloud.ca", mail: "https://mail.zohocloud.ca" },
 };
 
 interface ZohoCredentials {
@@ -352,7 +367,7 @@ async function authenticateZohoAccount(account: ZohoAccount): Promise<void> {
     access_token: tokenData.access_token,
     refresh_token: tokenData.refresh_token,
     expires_at: Date.now() + (tokenData.expires_in * 1000),
-    api_domain: tokenData.api_domain || dc.api,
+    api_domain: tokenData.api_domain || dc.calendar,
   };
 
   const tokensDir = getTokensDir();
@@ -592,7 +607,7 @@ async function getZohoEvents(config: Config, now: Date, timeMax: Date): Promise<
 
       const dc = ZOHO_DATACENTERS[account.datacenter];
       // Always use the calendar-specific API domain, not the generic api_domain
-      const apiBase = dc.api;
+      const apiBase = dc.calendar;
 
       // First get list of calendars
       const calendarsResponse = await fetch(`${apiBase}/api/v1/calendars?category=own`, {
@@ -702,6 +717,122 @@ async function getUpcomingEvents(config: Config): Promise<CalendarEvent[]> {
   const allEvents = [...googleEvents, ...zohoEvents];
   allEvents.sort((a, b) => a.start.getTime() - b.start.getTime());
   return allEvents;
+}
+
+// ============================================================================
+// Zoho Tasks
+// ============================================================================
+
+interface ZohoTask {
+  id: string;
+  title: string;
+  description: string;
+  dueDate: Date | null;
+  priority: "High" | "Normal" | "Low";
+  status: string;
+  isOverdue: boolean;
+}
+
+async function getZohoTasks(config: Config): Promise<ZohoTask[]> {
+  if (!config.zohoAccounts || config.zohoAccounts.length === 0) return [];
+  if (!config.showZohoTasks) return [];
+
+  const allTasks: ZohoTask[] = [];
+
+  for (const account of config.zohoAccounts) {
+    try {
+      const token = await refreshZohoToken(account);
+      if (!token) continue;
+
+      const dc = ZOHO_DATACENTERS[account.datacenter];
+      const mailBase = dc.mail;
+
+      // Fetch tasks assigned to user
+      const response = await fetch(
+        `${mailBase}/api/tasks/?view=assignedtome&action=view&limit=10&from=0`,
+        {
+          headers: {
+            Authorization: `Zoho-oauthtoken ${token.access_token}`,
+            Accept: "application/json",
+          },
+        }
+      );
+
+      if (!response.ok) continue;
+
+      const data = await response.json();
+      const tasks = data.data?.tasks || [];
+
+      const now = new Date();
+
+      for (const task of tasks) {
+        // Skip completed tasks
+        if (task.status === "Completed" || task.status === "completed") continue;
+
+        let dueDate: Date | null = null;
+        let isOverdue = false;
+
+        if (task.dueDate) {
+          // Parse DD/MM/YYYY format
+          const parts = task.dueDate.split("/");
+          if (parts.length === 3) {
+            dueDate = new Date(+parts[2], +parts[1] - 1, +parts[0]);
+            isOverdue = dueDate < now;
+          }
+        }
+
+        allTasks.push({
+          id: task.id || "",
+          title: task.title || "(No title)",
+          description: task.description || "",
+          dueDate,
+          priority: task.priority || "Normal",
+          status: task.status || "Open",
+          isOverdue,
+        });
+      }
+    } catch {
+      // Silently continue on error
+    }
+  }
+
+  // Sort: overdue first, then by due date (soonest first), then by priority
+  allTasks.sort((a, b) => {
+    // Overdue tasks first
+    if (a.isOverdue && !b.isOverdue) return -1;
+    if (!a.isOverdue && b.isOverdue) return 1;
+
+    // Then by due date (null dates go last)
+    if (a.dueDate && b.dueDate) {
+      return a.dueDate.getTime() - b.dueDate.getTime();
+    }
+    if (a.dueDate && !b.dueDate) return -1;
+    if (!a.dueDate && b.dueDate) return 1;
+
+    // Then by priority
+    const priorityOrder = { High: 0, Normal: 1, Low: 2 };
+    return (priorityOrder[a.priority] || 1) - (priorityOrder[b.priority] || 1);
+  });
+
+  return allTasks.slice(0, config.maxTasksToShow);
+}
+
+function formatTasks(tasks: ZohoTask[]): string | null {
+  if (tasks.length === 0) return null;
+
+  const formatted = tasks.map((task) => {
+    const title = task.title.length > 25 ? task.title.slice(0, 24) + "…" : task.title;
+
+    if (task.isOverdue) {
+      return `${COLORS.red}${title}${COLORS.reset}`;
+    } else if (task.priority === "High") {
+      return `${COLORS.yellow}${title}${COLORS.reset}`;
+    } else {
+      return `${COLORS.white}${title}${COLORS.reset}`;
+    }
+  });
+
+  return `${COLORS.cyan}Tasks:${COLORS.reset} ${formatted.join(", ")}`;
 }
 
 function extractAccountName(email: string): string {
@@ -871,8 +1002,11 @@ Usage:
   glancebar config --eye-reminder <true|false>   Enable/disable eye break reminders (default: true)
   glancebar config --cpu-usage <true|false>      Show CPU usage (default: false)
   glancebar config --memory-usage <true|false>   Show memory usage (default: false)
+  glancebar config --zoho-tasks <true|false>     Show Zoho tasks (default: true)
+  glancebar config --max-tasks <number>          Max tasks to show (default: 3)
   glancebar config --reset           Reset to default configuration
   glancebar setup                    Show setup instructions
+  glancebar --version                Show version
 
 Examples:
   glancebar auth --add user@gmail.com     # Will prompt for Google or Zoho
@@ -1322,6 +1456,34 @@ function handleConfig(args: string[]) {
     return;
   }
 
+  // Handle --zoho-tasks
+  const zohoTasksIndex = args.indexOf("--zoho-tasks");
+  if (zohoTasksIndex !== -1) {
+    const value = args[zohoTasksIndex + 1]?.toLowerCase();
+    if (value !== "true" && value !== "false") {
+      console.error("Error: --zoho-tasks must be 'true' or 'false'");
+      process.exit(1);
+    }
+    config.showZohoTasks = value === "true";
+    saveConfig(config);
+    console.log(`Zoho tasks display ${value === "true" ? "enabled" : "disabled"}`);
+    return;
+  }
+
+  // Handle --max-tasks
+  const maxTasksIndex = args.indexOf("--max-tasks");
+  if (maxTasksIndex !== -1) {
+    const value = parseInt(args[maxTasksIndex + 1], 10);
+    if (isNaN(value) || value < 1 || value > 10) {
+      console.error("Error: --max-tasks must be between 1 and 10");
+      process.exit(1);
+    }
+    config.maxTasksToShow = value;
+    saveConfig(config);
+    console.log(`Max tasks to show set to ${value}`);
+    return;
+  }
+
   // Show current config
   const gmailAccounts = config.gmailAccounts.length > 0 ? config.gmailAccounts : config.accounts;
   const googleStr = gmailAccounts.length > 0 ? gmailAccounts.join(", ") : "(none)";
@@ -1352,6 +1514,10 @@ Reminders:
 System Stats:
   CPU usage:           ${config.showCpuUsage ? "enabled" : "disabled"}
   Memory usage:        ${config.showMemoryUsage ? "enabled" : "disabled"}
+
+Zoho Tasks:
+  Show tasks:          ${config.showZohoTasks ? "enabled" : "disabled"}
+  Max tasks to show:   ${config.maxTasksToShow}
 `);
 }
 
@@ -1551,18 +1717,28 @@ async function outputStatusline() {
       parts.push(reminder);
     }
 
-    // Get calendar events
+    // Get calendar events and tasks in parallel
     const gmailAccounts = config.gmailAccounts.length > 0 ? config.gmailAccounts : config.accounts;
     const hasAccounts = gmailAccounts.length > 0 || config.zohoAccounts.length > 0;
 
     if (hasAccounts) {
-      const events = await getUpcomingEvents(config);
+      const [events, tasks] = await Promise.all([
+        getUpcomingEvents(config),
+        getZohoTasks(config),
+      ]);
+
       const event = getCurrentOrNextEvent(events);
 
       // Check for meeting warning (within 5 minutes)
       const meetingWarning = getMeetingWarning(event);
       if (meetingWarning) {
         parts.push(meetingWarning);
+      }
+
+      // Add tasks if available
+      const tasksStr = formatTasks(tasks);
+      if (tasksStr) {
+        parts.push(tasksStr);
       }
 
       if (event) {
@@ -1595,6 +1771,12 @@ async function main() {
   }
 
   switch (command) {
+    case "version":
+    case "--version":
+    case "-v":
+      console.log(`@naarang/glancebar v${VERSION}`);
+      break;
+
     case "help":
     case "--help":
     case "-h":
