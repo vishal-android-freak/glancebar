@@ -9,7 +9,7 @@ A customizable statusline for [Claude Code](https://claude.com/product/claude-co
 
 - **Session info** - Project name, git branch, model, cost, lines changed, and context usage
 - **System stats** - CPU and memory usage (optional)
-- **Calendar events** - Upcoming events from multiple Google accounts
+- **Calendar events** - Upcoming events from Google Calendar and Zoho Calendar
 - **Meeting warnings** - Red alert when a meeting is 5 minutes away
 - **Health reminders** - Water, stretch, and eye break reminders
 - **Color-coded** - Everything has distinct colors for quick scanning
@@ -19,7 +19,8 @@ A customizable statusline for [Claude Code](https://claude.com/product/claude-co
 ## Requirements
 
 - [Bun](https://bun.sh/) >= 1.0.0
-- Google Cloud project with Calendar API enabled
+- Google Cloud project with Calendar API enabled (for Google Calendar)
+- Zoho API Console credentials (for Zoho Calendar)
 
 ## Installation
 
@@ -49,8 +50,9 @@ npm install -g @naarang/glancebar
 # 1. Run setup guide
 glancebar setup
 
-# 2. Add your Google account (after setting up credentials)
+# 2. Add your account (after setting up credentials)
 glancebar auth --add your-email@gmail.com
+# Select Google (1) or Zoho (2) when prompted
 
 # 3. Test it
 glancebar
@@ -58,7 +60,9 @@ glancebar
 
 ## Setup
 
-### 1. Create Google Cloud Project
+### Google Calendar Setup
+
+#### 1. Create Google Cloud Project
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com/)
 2. Create a new project or select an existing one
@@ -66,30 +70,82 @@ glancebar
    - Go to "APIs & Services" > "Library"
    - Search for "Google Calendar API" and enable it
 
-### 2. Create OAuth Credentials
+#### 2. Create OAuth Credentials
 
 1. Go to "APIs & Services" > "Credentials"
 2. Click "Create Credentials" > "OAuth client ID"
 3. Select "Desktop app" as application type
-4. Download the JSON file
-5. Rename to `credentials.json` and save to `~/.glancebar/credentials.json`
+4. Give it a name and click "Create"
+5. Download the JSON file
+6. Rename to `credentials.json` and save to `~/.glancebar/credentials.json`
 
-### 3. Add Redirect URI
+#### 3. Add Redirect URI
 
-In Google Cloud Console, edit your OAuth client and add:
+Desktop app credentials don't show a redirect URI field in the console UI. You need to manually edit the downloaded `credentials.json` file:
 
+1. Open `~/.glancebar/credentials.json` in a text editor
+2. Find the `"redirect_uris"` array and ensure it contains:
+   ```json
+   "redirect_uris": ["http://localhost:3000/callback"]
+   ```
+3. Save the file
+
+Alternatively, you can add it via Google Cloud Console:
+1. Go to "APIs & Services" > "Credentials"
+2. Click on your OAuth client to edit it
+3. Under "Authorized redirect URIs", click "Add URI"
+4. Enter `http://localhost:3000/callback`
+5. Save and re-download the JSON file
+
+### Zoho Calendar Setup
+
+#### 1. Register Application
+
+1. Go to [Zoho API Console](https://api-console.zoho.com/)
+2. Click "Add Client" > "Server-based Applications"
+3. Enter application details
+
+#### 2. Configure Client
+
+1. Set Authorized Redirect URI: `http://localhost:3000/callback`
+2. Note your Client ID and Client Secret
+
+#### 3. Save Credentials
+
+Create `~/.glancebar/zoho_credentials.json`:
+
+```json
+{
+  "client_id": "YOUR_CLIENT_ID",
+  "client_secret": "YOUR_CLIENT_SECRET"
+}
 ```
-http://localhost:3000/callback
-```
 
-### 4. Add Accounts
+### Add Accounts
 
 ```bash
+# Add Google Calendar account
 glancebar auth --add your-email@gmail.com
-glancebar auth --add work@company.com
+# Select "1" for Google Calendar
+
+# Add Zoho Calendar account
+glancebar auth --add your-email@zoho.com
+# Select "2" for Zoho Calendar
+# Then select your datacenter region (1-7)
 ```
 
-### 5. Configure Claude Code
+**Zoho Datacenters:**
+| Choice | Region | Domain |
+|--------|--------|--------|
+| 1 | United States | zoho.com |
+| 2 | Europe | zoho.eu |
+| 3 | India | zoho.in |
+| 4 | Australia | zoho.com.au |
+| 5 | China | zoho.com.cn |
+| 6 | Japan | zoho.jp |
+| 7 | Canada | zohocloud.ca |
+
+### Configure Claude Code
 
 Update `~/.claude/settings.json`:
 
@@ -202,10 +258,12 @@ All configuration is stored in `~/.glancebar/`:
 
 ```
 ~/.glancebar/
-├── config.json        # User settings
-├── credentials.json   # Google OAuth credentials (you provide this)
-└── tokens/            # OAuth tokens per account
-    └── <email>.json
+├── config.json              # User settings
+├── credentials.json         # Google OAuth credentials (you provide)
+├── zoho_credentials.json    # Zoho OAuth credentials (you provide)
+└── tokens/                  # OAuth tokens per account
+    ├── google_<email>.json  # Google tokens
+    └── zoho_<email>.json    # Zoho tokens
 ```
 
 ### Default Settings

@@ -10,7 +10,9 @@ import { createInterface } from "readline";
 // ============================================================================
 
 interface Config {
-  accounts: string[];
+  accounts: string[]; // Legacy - for backwards compatibility
+  gmailAccounts: string[]; // Google accounts
+  zohoAccounts: ZohoAccount[]; // Zoho accounts
   lookaheadHours: number;
   showCalendarName: boolean;
   countdownThresholdMinutes: number;
@@ -20,6 +22,11 @@ interface Config {
   eyeReminderEnabled: boolean;
   showCpuUsage: boolean;
   showMemoryUsage: boolean;
+}
+
+interface ZohoAccount {
+  email: string;
+  datacenter: string; // com, eu, in, com.au, com.cn, jp, zohocloud.ca
 }
 
 const COLORS: Record<string, string> = {
@@ -45,7 +52,9 @@ const COLORS: Record<string, string> = {
 const ACCOUNT_COLORS = ["cyan", "magenta", "brightGreen", "orange", "brightBlue", "pink", "yellow", "purple"];
 
 const DEFAULT_CONFIG: Config = {
-  accounts: [],
+  accounts: [], // Legacy
+  gmailAccounts: [],
+  zohoAccounts: [],
   lookaheadHours: 8,
   showCalendarName: true,
   countdownThresholdMinutes: 60,
@@ -117,7 +126,14 @@ function loadConfig(): Config {
   try {
     const content = readFileSync(configPath, "utf-8");
     const userConfig = JSON.parse(content);
-    return { ...DEFAULT_CONFIG, ...userConfig };
+    const config = { ...DEFAULT_CONFIG, ...userConfig };
+
+    // Migrate legacy accounts to gmailAccounts
+    if (config.accounts && config.accounts.length > 0 && (!config.gmailAccounts || config.gmailAccounts.length === 0)) {
+      config.gmailAccounts = [...config.accounts];
+    }
+
+    return config;
   } catch {
     return { ...DEFAULT_CONFIG };
   }
@@ -129,23 +145,54 @@ function saveConfig(config: Config): void {
 }
 
 // ============================================================================
-// OAuth Authentication
+// Google OAuth Authentication
 // ============================================================================
 
-const SCOPES = ["https://www.googleapis.com/auth/calendar.readonly"];
+const GOOGLE_SCOPES = ["https://www.googleapis.com/auth/calendar.readonly"];
 const REDIRECT_URI = "http://localhost:3000/callback";
 
-interface Credentials {
+interface GoogleCredentials {
   installed?: { client_id: string; client_secret: string };
   web?: { client_id: string; client_secret: string };
 }
 
-function getCredentialsPath(): string {
+// ============================================================================
+// Zoho OAuth Authentication
+// ============================================================================
+
+const ZOHO_SCOPES = ["ZohoCalendar.calendar.READ", "ZohoCalendar.event.READ"];
+const ZOHO_REDIRECT_URI = "http://localhost:3000/callback";
+
+// Zoho datacenter mappings
+const ZOHO_DATACENTERS: Record<string, { accounts: string; api: string }> = {
+  "com": { accounts: "https://accounts.zoho.com", api: "https://calendar.zoho.com" },
+  "eu": { accounts: "https://accounts.zoho.eu", api: "https://calendar.zoho.eu" },
+  "in": { accounts: "https://accounts.zoho.in", api: "https://calendar.zoho.in" },
+  "com.au": { accounts: "https://accounts.zoho.com.au", api: "https://calendar.zoho.com.au" },
+  "com.cn": { accounts: "https://accounts.zoho.com.cn", api: "https://calendar.zoho.com.cn" },
+  "jp": { accounts: "https://accounts.zoho.jp", api: "https://calendar.zoho.jp" },
+  "zohocloud.ca": { accounts: "https://accounts.zohocloud.ca", api: "https://calendar.zohocloud.ca" },
+};
+
+interface ZohoCredentials {
+  client_id: string;
+  client_secret: string;
+}
+
+interface ZohoToken {
+  access_token: string;
+  refresh_token: string;
+  expires_at: number;
+  api_domain?: string;
+}
+
+// Google credentials
+function getGoogleCredentialsPath(): string {
   return join(getConfigDir(), "credentials.json");
 }
 
-function loadCredentials(): Credentials {
-  const credPath = getCredentialsPath();
+function loadGoogleCredentials(): GoogleCredentials {
+  const credPath = getGoogleCredentialsPath();
   if (!existsSync(credPath)) {
     throw new Error(
       `credentials.json not found at ${credPath}\n\nPlease download OAuth credentials from Google Cloud Console and save to:\n${credPath}\n\nRun 'glancebar setup' for detailed instructions.`
@@ -154,23 +201,55 @@ function loadCredentials(): Credentials {
   return JSON.parse(readFileSync(credPath, "utf-8"));
 }
 
-function getTokenPath(account: string): string {
+function getGoogleTokenPath(account: string): string {
+  const safeAccount = account.replace(/[^a-zA-Z0-9@.-]/g, "_");
+  return join(getTokensDir(), `google_${safeAccount}.json`);
+}
+
+// Legacy token path (for migration)
+function getLegacyTokenPath(account: string): string {
   const safeAccount = account.replace(/[^a-zA-Z0-9@.-]/g, "_");
   return join(getTokensDir(), `${safeAccount}.json`);
 }
 
-function createOAuth2Client(credentials: Credentials) {
+// Zoho credentials
+function getZohoCredentialsPath(): string {
+  return join(getConfigDir(), "zoho_credentials.json");
+}
+
+function loadZohoCredentials(): ZohoCredentials {
+  const credPath = getZohoCredentialsPath();
+  if (!existsSync(credPath)) {
+    throw new Error(
+      `zoho_credentials.json not found at ${credPath}\n\nPlease create OAuth credentials in Zoho API Console and save to:\n${credPath}\n\nRun 'glancebar setup' for detailed instructions.`
+    );
+  }
+  return JSON.parse(readFileSync(credPath, "utf-8"));
+}
+
+function getZohoTokenPath(account: string): string {
+  const safeAccount = account.replace(/[^a-zA-Z0-9@.-]/g, "_");
+  return join(getTokensDir(), `zoho_${safeAccount}.json`);
+}
+
+function createGoogleOAuth2Client(credentials: GoogleCredentials) {
   const { client_id, client_secret } = credentials.installed || credentials.web!;
   return new google.auth.OAuth2(client_id, client_secret, REDIRECT_URI);
 }
 
-function getAuthenticatedClient(account: string) {
-  const credentials = loadCredentials();
-  const oauth2Client = createOAuth2Client(credentials);
-  const tokenPath = getTokenPath(account);
+function getGoogleAuthenticatedClient(account: string) {
+  const credentials = loadGoogleCredentials();
+  const oauth2Client = createGoogleOAuth2Client(credentials);
 
+  // Try new path first, then legacy path
+  let tokenPath = getGoogleTokenPath(account);
   if (!existsSync(tokenPath)) {
-    return null;
+    const legacyPath = getLegacyTokenPath(account);
+    if (existsSync(legacyPath)) {
+      tokenPath = legacyPath;
+    } else {
+      return null;
+    }
   }
 
   const token = JSON.parse(readFileSync(tokenPath, "utf-8"));
@@ -185,13 +264,13 @@ function getAuthenticatedClient(account: string) {
   return oauth2Client;
 }
 
-async function authenticateAccount(account: string): Promise<void> {
-  const credentials = loadCredentials();
-  const oauth2Client = createOAuth2Client(credentials);
+async function authenticateGoogleAccount(account: string): Promise<void> {
+  const credentials = loadGoogleCredentials();
+  const oauth2Client = createGoogleOAuth2Client(credentials);
 
   const authUrl = oauth2Client.generateAuthUrl({
     access_type: "offline",
-    scope: SCOPES,
+    scope: GOOGLE_SCOPES,
     prompt: "consent",
     login_hint: account,
   });
@@ -211,9 +290,130 @@ async function authenticateAccount(account: string): Promise<void> {
     mkdirSync(tokensDir, { recursive: true });
   }
 
-  const tokenPath = getTokenPath(account);
+  const tokenPath = getGoogleTokenPath(account);
   writeFileSync(tokenPath, JSON.stringify(tokens, null, 2));
   console.log(`Token saved for ${account}`);
+}
+
+// ============================================================================
+// Zoho OAuth Flow
+// ============================================================================
+
+async function authenticateZohoAccount(account: ZohoAccount): Promise<void> {
+  const credentials = loadZohoCredentials();
+  const dc = ZOHO_DATACENTERS[account.datacenter];
+
+  if (!dc) {
+    throw new Error(`Invalid datacenter: ${account.datacenter}. Valid options: ${Object.keys(ZOHO_DATACENTERS).join(", ")}`);
+  }
+
+  const params = new URLSearchParams({
+    response_type: "code",
+    client_id: credentials.client_id,
+    scope: ZOHO_SCOPES.join(","),
+    redirect_uri: ZOHO_REDIRECT_URI,
+    access_type: "offline",
+    prompt: "consent",
+  });
+
+  const authUrl = `${dc.accounts}/oauth/v2/auth?${params.toString()}`;
+
+  console.log(`\nAuthenticating Zoho: ${account.email}`);
+  console.log(`Datacenter: ${account.datacenter}`);
+  console.log(`Opening browser...`);
+
+  const code = await startServerAndGetCode(authUrl);
+
+  console.log(`Exchanging code for tokens...`);
+
+  // Exchange code for tokens
+  const tokenParams = new URLSearchParams({
+    grant_type: "authorization_code",
+    client_id: credentials.client_id,
+    client_secret: credentials.client_secret,
+    redirect_uri: ZOHO_REDIRECT_URI,
+    code: code,
+  });
+
+  const tokenResponse = await fetch(`${dc.accounts}/oauth/v2/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: tokenParams.toString(),
+  });
+
+  if (!tokenResponse.ok) {
+    const errorText = await tokenResponse.text();
+    throw new Error(`Failed to get Zoho tokens: ${errorText}`);
+  }
+
+  const tokenData = await tokenResponse.json();
+
+  const token: ZohoToken = {
+    access_token: tokenData.access_token,
+    refresh_token: tokenData.refresh_token,
+    expires_at: Date.now() + (tokenData.expires_in * 1000),
+    api_domain: tokenData.api_domain || dc.api,
+  };
+
+  const tokensDir = getTokensDir();
+  if (!existsSync(tokensDir)) {
+    mkdirSync(tokensDir, { recursive: true });
+  }
+
+  const tokenPath = getZohoTokenPath(account.email);
+  writeFileSync(tokenPath, JSON.stringify(token, null, 2));
+  console.log(`Token saved for ${account.email}`);
+}
+
+async function refreshZohoToken(account: ZohoAccount): Promise<ZohoToken | null> {
+  const tokenPath = getZohoTokenPath(account.email);
+  if (!existsSync(tokenPath)) return null;
+
+  const token: ZohoToken = JSON.parse(readFileSync(tokenPath, "utf-8"));
+
+  // Check if token is still valid (with 5 minute buffer)
+  if (token.expires_at > Date.now() + 300000) {
+    return token;
+  }
+
+  // Refresh the token
+  try {
+    const credentials = loadZohoCredentials();
+    const dc = ZOHO_DATACENTERS[account.datacenter];
+
+    const params = new URLSearchParams({
+      grant_type: "refresh_token",
+      client_id: credentials.client_id,
+      client_secret: credentials.client_secret,
+      refresh_token: token.refresh_token,
+    });
+
+    const response = await fetch(`${dc.accounts}/oauth/v2/token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: params.toString(),
+    });
+
+    if (!response.ok) return null;
+
+    const data = await response.json();
+    const updatedToken: ZohoToken = {
+      ...token,
+      access_token: data.access_token,
+      expires_at: Date.now() + (data.expires_in * 1000),
+    };
+
+    writeFileSync(tokenPath, JSON.stringify(updatedToken, null, 2));
+    return updatedToken;
+  } catch {
+    return null;
+  }
+}
+
+function getZohoAuthenticatedToken(account: ZohoAccount): ZohoToken | null {
+  const tokenPath = getZohoTokenPath(account.email);
+  if (!existsSync(tokenPath)) return null;
+  return JSON.parse(readFileSync(tokenPath, "utf-8"));
 }
 
 function startServerAndGetCode(authUrl: string): Promise<string> {
@@ -313,16 +513,24 @@ interface CalendarEvent {
   account: string;
   accountEmail: string;
   accountIndex: number;
+  provider: "google" | "zoho";
 }
 
-async function getUpcomingEvents(config: Config): Promise<CalendarEvent[]> {
-  const allEvents: CalendarEvent[] = [];
-  const now = new Date();
-  const timeMax = new Date(now.getTime() + config.lookaheadHours * 60 * 60 * 1000);
+// Get all accounts combined for indexing
+function getAllAccounts(config: Config): string[] {
+  const gmailAccounts = config.gmailAccounts.length > 0 ? config.gmailAccounts : config.accounts;
+  const zohoEmails = config.zohoAccounts.map(z => z.email);
+  return [...gmailAccounts, ...zohoEmails];
+}
 
-  const eventPromises = config.accounts.map(async (account, accountIndex) => {
+async function getGoogleEvents(config: Config, now: Date, timeMax: Date): Promise<CalendarEvent[]> {
+  const gmailAccounts = config.gmailAccounts.length > 0 ? config.gmailAccounts : config.accounts;
+  const allAccounts = getAllAccounts(config);
+
+  const eventPromises = gmailAccounts.map(async (account) => {
+    const accountIndex = allAccounts.indexOf(account);
     try {
-      const auth = getAuthenticatedClient(account);
+      const auth = getGoogleAuthenticatedClient(account);
       if (!auth) return [];
 
       const calendar = google.calendar({ version: "v3", auth });
@@ -358,6 +566,7 @@ async function getUpcomingEvents(config: Config): Promise<CalendarEvent[]> {
           account: extractAccountName(account),
           accountEmail: account,
           accountIndex,
+          provider: "google" as const,
         };
       });
     } catch {
@@ -366,10 +575,131 @@ async function getUpcomingEvents(config: Config): Promise<CalendarEvent[]> {
   });
 
   const results = await Promise.all(eventPromises);
-  for (const events of results) {
-    allEvents.push(...events);
-  }
+  return results.flat();
+}
 
+async function getZohoEvents(config: Config, now: Date, timeMax: Date): Promise<CalendarEvent[]> {
+  if (!config.zohoAccounts || config.zohoAccounts.length === 0) return [];
+
+  const allAccounts = getAllAccounts(config);
+  const gmailCount = (config.gmailAccounts.length > 0 ? config.gmailAccounts : config.accounts).length;
+
+  const eventPromises = config.zohoAccounts.map(async (account, idx) => {
+    const accountIndex = gmailCount + idx;
+    try {
+      const token = await refreshZohoToken(account);
+      if (!token) return [];
+
+      const dc = ZOHO_DATACENTERS[account.datacenter];
+      // Always use the calendar-specific API domain, not the generic api_domain
+      const apiBase = dc.api;
+
+      // First get list of calendars
+      const calendarsResponse = await fetch(`${apiBase}/api/v1/calendars?category=own`, {
+        headers: {
+          Authorization: `Zoho-oauthtoken ${token.access_token}`,
+        },
+      });
+
+      if (!calendarsResponse.ok) return [];
+
+      const calendarsData = await calendarsResponse.json();
+      const calendars = calendarsData.calendars || [];
+
+      if (calendars.length === 0) return [];
+
+      // Use the first (primary) calendar
+      const primaryCalendar = calendars.find((c: any) => c.isdefault) || calendars[0];
+      const calendarUid = primaryCalendar.uid;
+
+      // Format dates for Zoho API (yyyyMMdd'T'HHmmss'Z')
+      const formatZohoDate = (date: Date): string => {
+        return date.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+      };
+
+      const range = JSON.stringify({
+        start: formatZohoDate(now),
+        end: formatZohoDate(timeMax),
+      });
+
+      const eventsResponse = await fetch(
+        `${apiBase}/api/v1/calendars/${encodeURIComponent(calendarUid)}/events?range=${encodeURIComponent(range)}`,
+        {
+          headers: {
+            Authorization: `Zoho-oauthtoken ${token.access_token}`,
+          },
+        }
+      );
+
+      if (!eventsResponse.ok) return [];
+
+      const eventsData = await eventsResponse.json();
+      const events = eventsData.events || [];
+
+      return events.map((event: any) => {
+        const isAllDay = event.isallday === true;
+        let start: Date, end: Date;
+
+        // Parse Zoho date format: "20260109T163000+0530" or "20260109T163000Z"
+        const parseZohoDate = (dateStr: string): Date => {
+          // Format: YYYYMMDDTHHmmss+HHMM or YYYYMMDDTHHmmssZ
+          const match = dateStr.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})([Z]|([+-])(\d{2})(\d{2}))?$/);
+          if (match) {
+            const [, year, month, day, hour, min, sec, tz, sign, tzHour, tzMin] = match;
+            if (tz === "Z") {
+              return new Date(Date.UTC(+year, +month - 1, +day, +hour, +min, +sec));
+            } else if (sign && tzHour && tzMin) {
+              const offsetMinutes = (+tzHour * 60 + +tzMin) * (sign === "+" ? -1 : 1);
+              const utc = Date.UTC(+year, +month - 1, +day, +hour, +min, +sec);
+              return new Date(utc + offsetMinutes * 60000);
+            }
+            // No timezone, assume local
+            return new Date(+year, +month - 1, +day, +hour, +min, +sec);
+          }
+          // Fallback to standard parsing
+          return new Date(dateStr);
+        };
+
+        if (event.dateandtime) {
+          start = parseZohoDate(event.dateandtime.start);
+          end = parseZohoDate(event.dateandtime.end);
+        } else {
+          start = parseZohoDate(event.start);
+          end = parseZohoDate(event.end);
+        }
+
+        return {
+          id: event.uid || "",
+          title: event.title || "(No title)",
+          start,
+          end,
+          isAllDay,
+          account: extractAccountName(account.email),
+          accountEmail: account.email,
+          accountIndex,
+          provider: "zoho" as const,
+        };
+      });
+    } catch {
+      return [];
+    }
+  });
+
+  const results = await Promise.all(eventPromises);
+  return results.flat();
+}
+
+async function getUpcomingEvents(config: Config): Promise<CalendarEvent[]> {
+  const now = new Date();
+  const timeMax = new Date(now.getTime() + config.lookaheadHours * 60 * 60 * 1000);
+
+  // Fetch from both providers in parallel
+  const [googleEvents, zohoEvents] = await Promise.all([
+    getGoogleEvents(config, now, timeMax),
+    getZohoEvents(config, now, timeMax),
+  ]);
+
+  const allEvents = [...googleEvents, ...zohoEvents];
   allEvents.sort((a, b) => a.start.getTime() - b.start.getTime());
   return allEvents;
 }
@@ -528,9 +858,9 @@ Display calendar events, tasks, and more at a glance.
 Usage:
   glancebar                          Output statusline (for Claude Code)
   glancebar auth                     Authenticate all configured accounts
-  glancebar auth --add <email>       Add and authenticate a new account
+  glancebar auth --add <email>       Add and authenticate a new account (prompts for provider)
   glancebar auth --remove <email>    Remove an account
-  glancebar auth --list              List configured accounts
+  glancebar auth --list              List all configured accounts
   glancebar config                   Show current configuration
   glancebar config --lookahead <hours>           Set lookahead hours (default: 8)
   glancebar config --countdown-threshold <mins>  Set countdown threshold in minutes (default: 60)
@@ -545,7 +875,8 @@ Usage:
   glancebar setup                    Show setup instructions
 
 Examples:
-  glancebar auth --add user@gmail.com
+  glancebar auth --add user@gmail.com     # Will prompt for Google or Zoho
+  glancebar auth --add user@zoho.com      # Will prompt for Google or Zoho
   glancebar config --lookahead 12
   glancebar config --stretch-reminder false
 
@@ -557,6 +888,9 @@ function printSetup() {
   console.log(`
 Glancebar - Setup Instructions
 ==============================
+
+GOOGLE CALENDAR SETUP
+---------------------
 
 Step 1: Create Google Cloud Project
    - Go to https://console.cloud.google.com/
@@ -574,17 +908,41 @@ Step 3: Create OAuth Credentials
 
 Step 4: Save credentials
    - Rename downloaded file to "credentials.json"
-   - Save it to: ${getCredentialsPath()}
+   - Save it to: ${getGoogleCredentialsPath()}
 
 Step 5: Add redirect URI
-   - In Google Cloud Console, edit your OAuth client
-   - Add redirect URI: http://localhost:3000/callback
+   - Edit credentials.json and ensure redirect_uris contains:
+     "redirect_uris": ["http://localhost:3000/callback"]
 
-Step 6: Add your Google accounts
+ZOHO CALENDAR SETUP
+-------------------
+
+Step 1: Register Application
+   - Go to https://api-console.zoho.com/
+   - Click "Add Client" > "Server-based Applications"
+
+Step 2: Configure Client
+   - Set Authorized Redirect URI: http://localhost:3000/callback
+   - Note your Client ID and Client Secret
+
+Step 3: Save credentials
+   - Create file: ${getZohoCredentialsPath()}
+   - Add content:
+     {
+       "client_id": "YOUR_CLIENT_ID",
+       "client_secret": "YOUR_CLIENT_SECRET"
+     }
+
+ADDING ACCOUNTS
+---------------
+
    glancebar auth --add your-email@gmail.com
-   glancebar auth --add work@company.com
+   # Select "Google" or "Zoho" when prompted
+   # For Zoho, select your datacenter region
 
-Step 7: Configure Claude Code statusline
+CONFIGURE CLAUDE CODE
+---------------------
+
    Update ~/.claude/settings.json:
    {
      "statusLine": {
@@ -599,19 +957,40 @@ For more info: https://github.com/vishal-android-freak/glancebar
 }
 
 async function handleAuth(args: string[]) {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const prompt = (q: string): Promise<string> => new Promise((r) => rl.question(q, r));
+
   // Handle --list
   if (args.includes("--list")) {
     const config = loadConfig();
-    if (config.accounts.length === 0) {
+    const gmailAccounts = config.gmailAccounts.length > 0 ? config.gmailAccounts : config.accounts;
+    const hasAny = gmailAccounts.length > 0 || config.zohoAccounts.length > 0;
+
+    if (!hasAny) {
       console.log("No accounts configured.");
     } else {
-      console.log("Configured accounts:");
-      config.accounts.forEach((acc, i) => {
-        const tokenPath = getTokenPath(acc);
-        const status = existsSync(tokenPath) ? "authenticated" : "not authenticated";
-        console.log(`  ${i + 1}. ${acc} (${status})`);
-      });
+      if (gmailAccounts.length > 0) {
+        console.log("\nGoogle Calendar accounts:");
+        gmailAccounts.forEach((acc, i) => {
+          let tokenPath = getGoogleTokenPath(acc);
+          if (!existsSync(tokenPath)) {
+            tokenPath = getLegacyTokenPath(acc);
+          }
+          const status = existsSync(tokenPath) ? "authenticated" : "not authenticated";
+          console.log(`  ${i + 1}. ${acc} (${status})`);
+        });
+      }
+
+      if (config.zohoAccounts.length > 0) {
+        console.log("\nZoho Calendar accounts:");
+        config.zohoAccounts.forEach((acc, i) => {
+          const tokenPath = getZohoTokenPath(acc.email);
+          const status = existsSync(tokenPath) ? "authenticated" : "not authenticated";
+          console.log(`  ${i + 1}. ${acc.email} [${acc.datacenter}] (${status})`);
+        });
+      }
     }
+    rl.close();
     return;
   }
 
@@ -621,25 +1000,89 @@ async function handleAuth(args: string[]) {
     const email = args[addIndex + 1];
     if (!email || email.startsWith("--")) {
       console.error("Error: Please provide an email address after --add");
+      rl.close();
       process.exit(1);
     }
 
     if (!email.includes("@")) {
       console.error("Error: Invalid email address");
+      rl.close();
       process.exit(1);
     }
 
+    // Prompt for provider
+    console.log("\nSelect calendar provider:");
+    console.log("  1. Google Calendar");
+    console.log("  2. Zoho Calendar");
+    const providerChoice = await prompt("\nEnter choice (1 or 2): ");
+
     const config = loadConfig();
-    if (config.accounts.includes(email)) {
-      console.log(`Account ${email} already exists. Re-authenticating...`);
+
+    if (providerChoice === "1") {
+      // Google Calendar
+      const gmailAccounts = config.gmailAccounts.length > 0 ? config.gmailAccounts : config.accounts;
+      if (gmailAccounts.includes(email)) {
+        console.log(`\nGoogle account ${email} already exists. Re-authenticating...`);
+      } else {
+        if (config.gmailAccounts.length === 0 && config.accounts.length > 0) {
+          config.gmailAccounts = [...config.accounts];
+        }
+        config.gmailAccounts.push(email);
+        saveConfig(config);
+        console.log(`\nAdded ${email} to Google accounts.`);
+      }
+
+      await authenticateGoogleAccount(email);
+      console.log("\nDone!");
+    } else if (providerChoice === "2") {
+      // Zoho Calendar
+      console.log("\nSelect Zoho datacenter:");
+      console.log("  1. com     - United States");
+      console.log("  2. eu      - Europe");
+      console.log("  3. in      - India");
+      console.log("  4. com.au  - Australia");
+      console.log("  5. com.cn  - China");
+      console.log("  6. jp      - Japan");
+      console.log("  7. zohocloud.ca - Canada");
+
+      const dcChoice = await prompt("\nEnter choice (1-7): ");
+      const dcMap: Record<string, string> = {
+        "1": "com",
+        "2": "eu",
+        "3": "in",
+        "4": "com.au",
+        "5": "com.cn",
+        "6": "jp",
+        "7": "zohocloud.ca",
+      };
+
+      const datacenter = dcMap[dcChoice];
+      if (!datacenter) {
+        console.error("Error: Invalid datacenter choice");
+        rl.close();
+        process.exit(1);
+      }
+
+      const existingZoho = config.zohoAccounts.find((z) => z.email === email);
+      if (existingZoho) {
+        console.log(`\nZoho account ${email} already exists. Re-authenticating...`);
+        existingZoho.datacenter = datacenter;
+        saveConfig(config);
+      } else {
+        config.zohoAccounts.push({ email, datacenter });
+        saveConfig(config);
+        console.log(`\nAdded ${email} to Zoho accounts.`);
+      }
+
+      await authenticateZohoAccount({ email, datacenter });
+      console.log("\nDone!");
     } else {
-      config.accounts.push(email);
-      saveConfig(config);
-      console.log(`Added ${email} to accounts.`);
+      console.error("Error: Invalid choice. Please enter 1 or 2.");
+      rl.close();
+      process.exit(1);
     }
 
-    await authenticateAccount(email);
-    console.log("\nDone!");
+    rl.close();
     return;
   }
 
@@ -649,52 +1092,92 @@ async function handleAuth(args: string[]) {
     const email = args[removeIndex + 1];
     if (!email || email.startsWith("--")) {
       console.error("Error: Please provide an email address after --remove");
+      rl.close();
       process.exit(1);
     }
 
     const config = loadConfig();
-    const idx = config.accounts.indexOf(email);
-    if (idx === -1) {
-      console.error(`Error: Account ${email} not found.`);
-      process.exit(1);
+    const gmailAccounts = config.gmailAccounts.length > 0 ? config.gmailAccounts : config.accounts;
+
+    // Check Google accounts
+    const googleIdx = gmailAccounts.indexOf(email);
+    if (googleIdx !== -1) {
+      if (config.gmailAccounts.length > 0) {
+        config.gmailAccounts.splice(googleIdx, 1);
+      } else {
+        config.accounts.splice(googleIdx, 1);
+      }
+      saveConfig(config);
+
+      // Remove token files
+      const tokenPath = getGoogleTokenPath(email);
+      const legacyPath = getLegacyTokenPath(email);
+      if (existsSync(tokenPath)) unlinkSync(tokenPath);
+      if (existsSync(legacyPath)) unlinkSync(legacyPath);
+
+      console.log(`Removed Google account ${email}.`);
+      rl.close();
+      return;
     }
 
-    config.accounts.splice(idx, 1);
-    saveConfig(config);
+    // Check Zoho accounts
+    const zohoIdx = config.zohoAccounts.findIndex((z) => z.email === email);
+    if (zohoIdx !== -1) {
+      config.zohoAccounts.splice(zohoIdx, 1);
+      saveConfig(config);
 
-    const tokenPath = getTokenPath(email);
-    if (existsSync(tokenPath)) {
-      unlinkSync(tokenPath);
+      const tokenPath = getZohoTokenPath(email);
+      if (existsSync(tokenPath)) unlinkSync(tokenPath);
+
+      console.log(`Removed Zoho account ${email}.`);
+      rl.close();
+      return;
     }
 
-    console.log(`Removed ${email} from accounts.`);
-    return;
+    console.error(`Error: Account ${email} not found.`);
+    rl.close();
+    process.exit(1);
   }
 
   // Default: authenticate all accounts
   const config = loadConfig();
+  const gmailAccounts = config.gmailAccounts.length > 0 ? config.gmailAccounts : config.accounts;
+  const hasAny = gmailAccounts.length > 0 || config.zohoAccounts.length > 0;
 
-  if (config.accounts.length === 0) {
+  if (!hasAny) {
     console.log("No accounts configured.\n");
     console.log("Add an account using:");
     console.log("  glancebar auth --add your-email@gmail.com\n");
+    rl.close();
     return;
   }
 
-  console.log("Glancebar - Google Calendar Authentication");
-  console.log("==========================================\n");
+  console.log("Glancebar - Calendar Authentication");
+  console.log("====================================\n");
 
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  const prompt = (q: string): Promise<string> => new Promise((r) => rl.question(q, r));
-
-  for (const account of config.accounts) {
-    const tokenPath = getTokenPath(account);
+  // Authenticate Google accounts
+  for (const account of gmailAccounts) {
+    let tokenPath = getGoogleTokenPath(account);
+    if (!existsSync(tokenPath)) {
+      tokenPath = getLegacyTokenPath(account);
+    }
     if (existsSync(tokenPath)) {
-      console.log(`${account}: Already authenticated`);
-      const answer = await prompt(`Re-authenticate ${account}? (y/N): `);
+      console.log(`Google: ${account} - Already authenticated`);
+      const answer = await prompt(`Re-authenticate? (y/N): `);
       if (answer.toLowerCase() !== "y") continue;
     }
-    await authenticateAccount(account);
+    await authenticateGoogleAccount(account);
+  }
+
+  // Authenticate Zoho accounts
+  for (const account of config.zohoAccounts) {
+    const tokenPath = getZohoTokenPath(account.email);
+    if (existsSync(tokenPath)) {
+      console.log(`Zoho: ${account.email} [${account.datacenter}] - Already authenticated`);
+      const answer = await prompt(`Re-authenticate? (y/N): `);
+      if (answer.toLowerCase() !== "y") continue;
+    }
+    await authenticateZohoAccount(account);
   }
 
   rl.close();
@@ -706,8 +1189,9 @@ function handleConfig(args: string[]) {
 
   // Handle --reset
   if (args.includes("--reset")) {
-    const accounts = config.accounts; // Preserve accounts
-    saveConfig({ ...DEFAULT_CONFIG, accounts });
+    // Preserve all account types
+    const { accounts, gmailAccounts, zohoAccounts } = config;
+    saveConfig({ ...DEFAULT_CONFIG, accounts, gmailAccounts, zohoAccounts });
     console.log("Configuration reset to defaults (accounts preserved).");
     return;
   }
@@ -839,11 +1323,20 @@ function handleConfig(args: string[]) {
   }
 
   // Show current config
+  const gmailAccounts = config.gmailAccounts.length > 0 ? config.gmailAccounts : config.accounts;
+  const googleStr = gmailAccounts.length > 0 ? gmailAccounts.join(", ") : "(none)";
+  const zohoStr = config.zohoAccounts.length > 0
+    ? config.zohoAccounts.map((z) => `${z.email} [${z.datacenter}]`).join(", ")
+    : "(none)";
+
   console.log(`
 Glancebar Configuration
 =======================
 Config directory:    ${getConfigDir()}
-Accounts:            ${config.accounts.length > 0 ? config.accounts.join(", ") : "(none)"}
+
+Accounts:
+  Google Calendar:   ${googleStr}
+  Zoho Calendar:     ${zohoStr}
 
 Calendar Settings:
   Lookahead hours:     ${config.lookaheadHours}
@@ -1059,7 +1552,10 @@ async function outputStatusline() {
     }
 
     // Get calendar events
-    if (config.accounts.length > 0) {
+    const gmailAccounts = config.gmailAccounts.length > 0 ? config.gmailAccounts : config.accounts;
+    const hasAccounts = gmailAccounts.length > 0 || config.zohoAccounts.length > 0;
+
+    if (hasAccounts) {
       const events = await getUpcomingEvents(config);
       const event = getCurrentOrNextEvent(events);
 
