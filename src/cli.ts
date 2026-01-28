@@ -31,11 +31,43 @@ interface Config {
   showMemoryUsage: boolean;
   showZohoTasks: boolean;
   maxTasksToShow: number;
+  showUsageLimits: boolean;
+  show5HourLimit: boolean;
+  show7DayLimit: boolean;
+  usageLimitsCacheTTL: number;  // In seconds, default 300 (5 min)
 }
 
 interface ZohoAccount {
   email: string;
   datacenter: string; // com, eu, in, com.au, com.cn, jp, zohocloud.ca
+}
+
+interface ClaudeCredentials {
+  claudeAiOauth: {
+    accessToken: string;
+    refreshToken: string;
+    expiresAt: number;
+    scopes: string[];
+    subscriptionType: string;
+    rateLimitTier: string;
+  };
+}
+
+interface UsageLimits {
+  five_hour: {
+    utilization: number;      // Percentage (0-100)
+    resets_at: string;        // ISO timestamp
+  };
+  seven_day: {
+    utilization: number;      // Percentage (0-100)
+    resets_at: string;        // ISO timestamp
+  };
+}
+
+interface UsageLimitsCache {
+  data: UsageLimits | null;
+  fetchedAt: number;          // Unix timestamp
+  ttl: number;                // Cache TTL in milliseconds (default: 5 minutes)
 }
 
 const COLORS: Record<string, string> = {
@@ -75,6 +107,10 @@ const DEFAULT_CONFIG: Config = {
   showMemoryUsage: false,
   showZohoTasks: true,
   maxTasksToShow: 3,
+  showUsageLimits: true,
+  show5HourLimit: true,
+  show7DayLimit: true,
+  usageLimitsCacheTTL: 120,  // 2 minutes
 };
 
 const WATER_REMINDERS = [
@@ -119,6 +155,146 @@ function getConfigPath(): string {
 
 function getTokensDir(): string {
   return join(getConfigDir(), "tokens");
+}
+
+// ============================================================================
+// Claude Usage Limits
+// ============================================================================
+
+function getClaudeCredentialsPath(): string {
+  const home = process.env.HOME || process.env.USERPROFILE || "";
+  return join(home, ".claude", ".credentials.json");
+}
+
+function loadClaudeCredentials(): ClaudeCredentials | null {
+  try {
+    const credPath = getClaudeCredentialsPath();
+    if (!existsSync(credPath)) return null;
+    const content = readFileSync(credPath, "utf-8");
+    return JSON.parse(content);
+  } catch {
+    return null;
+  }
+}
+
+function getUsageLimitsCachePath(): string {
+  return join(getConfigDir(), "usage_limits_cache.json");
+}
+
+function loadUsageLimitsCache(): UsageLimitsCache {
+  try {
+    const cachePath = getUsageLimitsCachePath();
+    if (!existsSync(cachePath)) {
+      return { data: null, fetchedAt: 0, ttl: 120000 };
+    }
+    const content = readFileSync(cachePath, "utf-8");
+    return JSON.parse(content);
+  } catch {
+    return { data: null, fetchedAt: 0, ttl: 120000 };
+  }
+}
+
+function saveUsageLimitsCache(cache: UsageLimitsCache): void {
+  try {
+    ensureConfigDir();
+    const cachePath = getUsageLimitsCachePath();
+    writeFileSync(cachePath, JSON.stringify(cache, null, 2));
+  } catch {
+    // Silently fail if we can't save cache
+  }
+}
+
+async function fetchUsageLimitsFromAPI(): Promise<UsageLimits | null> {
+  try {
+    const creds = loadClaudeCredentials();
+    if (!creds?.claudeAiOauth?.accessToken) return null;
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+    const response = await fetch("https://api.anthropic.com/api/oauth/usage", {
+      method: "GET",
+      headers: {
+        "Authorization": `Bearer ${creds.claudeAiOauth.accessToken}`,
+        "anthropic-beta": "oauth-2025-04-20",
+      },
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const data = await response.json();
+
+    if (!data.five_hour || !data.seven_day) {
+      return null;
+    }
+
+    return {
+      five_hour: {
+        utilization: data.five_hour.utilization || 0,
+        resets_at: data.five_hour.resets_at || "",
+      },
+      seven_day: {
+        utilization: data.seven_day.utilization || 0,
+        resets_at: data.seven_day.resets_at || "",
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function getUsageLimits(config: Config): Promise<UsageLimits | null> {
+  const cache = loadUsageLimitsCache();
+  const now = Date.now();
+  const ttlMs = config.usageLimitsCacheTTL * 1000;
+
+  // Return cached data if fresh
+  if (cache.data && (now - cache.fetchedAt) < ttlMs) {
+    return cache.data;
+  }
+
+  // Cache is stale or missing, fetch from API
+  const freshData = await fetchUsageLimitsFromAPI();
+
+  // Update cache if fetch succeeded
+  if (freshData) {
+    saveUsageLimitsCache({
+      data: freshData,
+      fetchedAt: now,
+      ttl: ttlMs,
+    });
+    return freshData;
+  }
+
+  // Fetch failed - return stale cache if available
+  return cache.data || null;
+}
+
+function formatUsageLimits(usageLimits: UsageLimits, config: Config): string | null {
+  const parts: string[] = [];
+
+  if (config.show5HourLimit) {
+    const util = usageLimits.five_hour.utilization;
+    let color = COLORS.green;
+    if (util >= 80) color = COLORS.red;
+    else if (util >= 50) color = COLORS.yellow;
+    parts.push(`${color}5h: ${util.toFixed(0)}%${COLORS.reset}`);
+  }
+
+  if (config.show7DayLimit) {
+    const util = usageLimits.seven_day.utilization;
+    let color = COLORS.green;
+    if (util >= 80) color = COLORS.red;
+    else if (util >= 50) color = COLORS.yellow;
+    parts.push(`${color}7d: ${util.toFixed(0)}%${COLORS.reset}`);
+  }
+
+  return parts.length > 0 ? parts.join(" | ") : null;
 }
 
 function ensureConfigDir(): void {
@@ -949,8 +1125,24 @@ function getMemoryUsage(): string | null {
   try {
     const os = require("os");
     const totalMem = os.totalmem();
-    const freeMem = os.freemem();
-    const usedMem = totalMem - freeMem;
+
+    // Read MemAvailable from /proc/meminfo (Linux only)
+    // MemAvailable accounts for reclaimable cache/buffers
+    let availableMem = os.freemem(); // fallback for non-Linux
+
+    if (process.platform === "linux") {
+      try {
+        const meminfo = readFileSync("/proc/meminfo", "utf-8");
+        const match = meminfo.match(/MemAvailable:\s+(\d+)\s+kB/);
+        if (match) {
+          availableMem = parseInt(match[1], 10) * 1024; // Convert kB to bytes
+        }
+      } catch {
+        // Fall back to freemem if /proc/meminfo is unavailable
+      }
+    }
+
+    const usedMem = totalMem - availableMem;
     const usagePercent = Math.round((usedMem / totalMem) * 100);
 
     // Format used memory
@@ -1004,6 +1196,10 @@ Usage:
   glancebar config --memory-usage <true|false>   Show memory usage (default: false)
   glancebar config --zoho-tasks <true|false>     Show Zoho tasks (default: true)
   glancebar config --max-tasks <number>          Max tasks to show (default: 3)
+  glancebar config --show-usage-limits <true|false>  Show usage limits from API (default: true)
+  glancebar config --show-5hour-limit <true|false>   Show 5-hour window utilization (default: true)
+  glancebar config --show-7day-limit <true|false>    Show 7-day window utilization (default: true)
+  glancebar config --usage-cache-ttl <seconds>       API cache TTL in seconds (default: 120)
   glancebar config --reset           Reset to default configuration
   glancebar setup                    Show setup instructions
   glancebar --version                Show version
@@ -1484,6 +1680,62 @@ function handleConfig(args: string[]) {
     return;
   }
 
+  // Handle --show-usage-limits
+  const showUsageLimitsIndex = args.indexOf("--show-usage-limits");
+  if (showUsageLimitsIndex !== -1) {
+    const value = args[showUsageLimitsIndex + 1]?.toLowerCase();
+    if (value !== "true" && value !== "false") {
+      console.error("Error: --show-usage-limits must be 'true' or 'false'");
+      process.exit(1);
+    }
+    config.showUsageLimits = value === "true";
+    saveConfig(config);
+    console.log(`Usage limits display ${value === "true" ? "enabled" : "disabled"}`);
+    return;
+  }
+
+  // Handle --show-5hour-limit
+  const show5HourIndex = args.indexOf("--show-5hour-limit");
+  if (show5HourIndex !== -1) {
+    const value = args[show5HourIndex + 1]?.toLowerCase();
+    if (value !== "true" && value !== "false") {
+      console.error("Error: --show-5hour-limit must be 'true' or 'false'");
+      process.exit(1);
+    }
+    config.show5HourLimit = value === "true";
+    saveConfig(config);
+    console.log(`5-hour limit display ${value === "true" ? "enabled" : "disabled"}`);
+    return;
+  }
+
+  // Handle --show-7day-limit
+  const show7DayIndex = args.indexOf("--show-7day-limit");
+  if (show7DayIndex !== -1) {
+    const value = args[show7DayIndex + 1]?.toLowerCase();
+    if (value !== "true" && value !== "false") {
+      console.error("Error: --show-7day-limit must be 'true' or 'false'");
+      process.exit(1);
+    }
+    config.show7DayLimit = value === "true";
+    saveConfig(config);
+    console.log(`7-day limit display ${value === "true" ? "enabled" : "disabled"}`);
+    return;
+  }
+
+  // Handle --usage-cache-ttl
+  const cacheTTLIndex = args.indexOf("--usage-cache-ttl");
+  if (cacheTTLIndex !== -1) {
+    const value = parseInt(args[cacheTTLIndex + 1], 10);
+    if (isNaN(value) || value < 60 || value > 3600) {
+      console.error("Error: --usage-cache-ttl must be between 60 and 3600 seconds");
+      process.exit(1);
+    }
+    config.usageLimitsCacheTTL = value;
+    saveConfig(config);
+    console.log(`API cache TTL set to ${value} seconds`);
+    return;
+  }
+
   // Show current config
   const gmailAccounts = config.gmailAccounts.length > 0 ? config.gmailAccounts : config.accounts;
   const googleStr = gmailAccounts.length > 0 ? gmailAccounts.join(", ") : "(none)";
@@ -1518,6 +1770,12 @@ System Stats:
 Zoho Tasks:
   Show tasks:          ${config.showZohoTasks ? "enabled" : "disabled"}
   Max tasks to show:   ${config.maxTasksToShow}
+
+Usage Limits:
+  Show usage limits:   ${config.showUsageLimits ? "enabled" : "disabled"}
+  Show 5-hour limit:   ${config.show5HourLimit ? "enabled" : "disabled"}
+  Show 7-day limit:    ${config.show7DayLimit ? "enabled" : "disabled"}
+  Cache TTL:           ${config.usageLimitsCacheTTL} seconds
 `);
 }
 
@@ -1686,11 +1944,11 @@ function formatSessionInfo(status: ClaudeCodeStatus): string {
 }
 
 async function outputStatusline() {
-  // Read and parse stdin from Claude Code
-  const status = await readStdinJson();
-
   try {
     const config = loadConfig();
+
+    // Read and parse stdin from Claude Code
+    const status = await readStdinJson();
     const parts: string[] = [];
 
     // Add session info from Claude Code
@@ -1698,6 +1956,17 @@ async function outputStatusline() {
       const sessionInfo = formatSessionInfo(status);
       if (sessionInfo) {
         parts.push(sessionInfo);
+      }
+    }
+
+    // Fetch and display usage limits
+    if (config.showUsageLimits) {
+      const usageLimits = await getUsageLimits(config);
+      if (usageLimits) {
+        const limitsStr = formatUsageLimits(usageLimits, config);
+        if (limitsStr) {
+          parts.push(limitsStr);
+        }
       }
     }
 
