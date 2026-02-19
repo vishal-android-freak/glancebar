@@ -34,6 +34,11 @@ interface Config {
   showUsageLimits: boolean;
   show5HourLimit: boolean;
   show7DayLimit: boolean;
+  show7DaySonnetLimit: boolean;
+  show5HourResets: boolean;
+  show7DayResets: boolean;
+  show7DaySonnetResets: boolean;
+  resetsTimeFormat: "relative" | "absolute";
   usageLimitsCacheTTL: number;  // In seconds, default 300 (5 min)
 }
 
@@ -62,6 +67,10 @@ interface UsageLimits {
     utilization: number;      // Percentage (0-100)
     resets_at: string;        // ISO timestamp
   };
+  seven_day_sonnet: {
+    utilization: number;      // Percentage (0-100)
+    resets_at: string;        // ISO timestamp
+  } | null;  // null if not available in API response
 }
 
 interface UsageLimitsCache {
@@ -110,6 +119,11 @@ const DEFAULT_CONFIG: Config = {
   showUsageLimits: true,
   show5HourLimit: true,
   show7DayLimit: true,
+  show7DaySonnetLimit: true,
+  show5HourResets: false,
+  show7DayResets: false,
+  show7DaySonnetResets: false,
+  resetsTimeFormat: "relative",
   usageLimitsCacheTTL: 120,  // 2 minutes
 };
 
@@ -229,19 +243,24 @@ async function fetchUsageLimitsFromAPI(): Promise<UsageLimits | null> {
 
     const data = await response.json();
 
-    if (!data.five_hour || !data.seven_day) {
+    // Validate at least one limit exists
+    if (!data.five_hour && !data.seven_day && !data.seven_day_sonnet) {
       return null;
     }
 
     return {
-      five_hour: {
+      five_hour: data.five_hour ? {
         utilization: data.five_hour.utilization || 0,
         resets_at: data.five_hour.resets_at || "",
-      },
-      seven_day: {
+      } : { utilization: 0, resets_at: "" },
+      seven_day: data.seven_day ? {
         utilization: data.seven_day.utilization || 0,
         resets_at: data.seven_day.resets_at || "",
-      },
+      } : { utilization: 0, resets_at: "" },
+      seven_day_sonnet: data.seven_day_sonnet ? {
+        utilization: data.seven_day_sonnet.utilization || 0,
+        resets_at: data.seven_day_sonnet.resets_at || "",
+      } : null,
     };
   } catch {
     return null;
@@ -275,23 +294,71 @@ async function getUsageLimits(config: Config): Promise<UsageLimits | null> {
   return cache.data || null;
 }
 
+// Helper function to format reset time
+function formatResetTime(isoTimestamp: string, format: "relative" | "absolute"): string {
+  const resetDate = new Date(isoTimestamp);
+  const now = new Date();
+
+  if (format === "absolute") {
+    // Format as "Jan 30, 2:59 PM"
+    const dateStr = resetDate.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    const timeStr = resetDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    return `${dateStr}, ${timeStr}`;
+  } else {
+    // Relative: "in 2h 15m" or "in 4d 10h"
+    const diffMs = resetDate.getTime() - now.getTime();
+    if (diffMs <= 0) return "now";
+
+    const diffMinutes = Math.floor(diffMs / 60000);
+    const hours = Math.floor(diffMinutes / 60);
+    const minutes = diffMinutes % 60;
+
+    // If over 24 hours, show days
+    if (hours >= 24) {
+      const days = Math.floor(hours / 24);
+      const remainingHours = hours % 24;
+      if (remainingHours === 0) return `in ${days}d`;
+      return `in ${days}d ${remainingHours}h`;
+    }
+
+    if (hours === 0) return `in ${minutes}m`;
+    if (minutes === 0) return `in ${hours}h`;
+    return `in ${hours}h${minutes}m`;
+  }
+}
+
 function formatUsageLimits(usageLimits: UsageLimits, config: Config): string | null {
   const parts: string[] = [];
 
-  if (config.show5HourLimit) {
-    const util = usageLimits.five_hour.utilization;
+  // Helper to format a single limit
+  const formatLimit = (label: string, utilization: number, resetsAt: string, showResets: boolean) => {
     let color = COLORS.green;
-    if (util >= 80) color = COLORS.red;
-    else if (util >= 50) color = COLORS.yellow;
-    parts.push(`${color}5h: ${util.toFixed(0)}%${COLORS.reset}`);
+    if (utilization >= 80) color = COLORS.red;
+    else if (utilization >= 50) color = COLORS.yellow;
+
+    let text = `${label}: ${utilization.toFixed(0)}%`;
+    if (showResets && resetsAt) {
+      text += ` (${formatResetTime(resetsAt, config.resetsTimeFormat)})`;
+    }
+    return `${color}${text}${COLORS.reset}`;
+  };
+
+  // 5-hour limit
+  if (config.show5HourLimit) {
+    parts.push(formatLimit("5h", usageLimits.five_hour.utilization,
+                          usageLimits.five_hour.resets_at, config.show5HourResets));
   }
 
+  // 7-day limit
   if (config.show7DayLimit) {
-    const util = usageLimits.seven_day.utilization;
-    let color = COLORS.green;
-    if (util >= 80) color = COLORS.red;
-    else if (util >= 50) color = COLORS.yellow;
-    parts.push(`${color}7d: ${util.toFixed(0)}%${COLORS.reset}`);
+    parts.push(formatLimit("7d", usageLimits.seven_day.utilization,
+                          usageLimits.seven_day.resets_at, config.show7DayResets));
+  }
+
+  // 7-day sonnet limit
+  if (config.show7DaySonnetLimit && usageLimits.seven_day_sonnet) {
+    parts.push(formatLimit("7d-sonnet", usageLimits.seven_day_sonnet.utilization,
+                          usageLimits.seven_day_sonnet.resets_at, config.show7DaySonnetResets));
   }
 
   return parts.length > 0 ? parts.join(" | ") : null;
@@ -1196,10 +1263,15 @@ Usage:
   glancebar config --memory-usage <true|false>   Show memory usage (default: false)
   glancebar config --zoho-tasks <true|false>     Show Zoho tasks (default: true)
   glancebar config --max-tasks <number>          Max tasks to show (default: 3)
-  glancebar config --show-usage-limits <true|false>  Show usage limits from API (default: true)
-  glancebar config --show-5hour-limit <true|false>   Show 5-hour window utilization (default: true)
-  glancebar config --show-7day-limit <true|false>    Show 7-day window utilization (default: true)
-  glancebar config --usage-cache-ttl <seconds>       API cache TTL in seconds (default: 120)
+  glancebar config --show-usage-limits <true|false>        Show usage limits from API (default: true)
+  glancebar config --show-5hour-limit <true|false>         Show 5-hour window utilization (default: true)
+  glancebar config --show-7day-limit <true|false>          Show 7-day window utilization (default: true)
+  glancebar config --show-7day-sonnet-limit <true|false>   Show 7-day Sonnet limit (default: true)
+  glancebar config --show-5hour-resets <true|false>        Show 5-hour reset time (default: false)
+  glancebar config --show-7day-resets <true|false>         Show 7-day reset time (default: false)
+  glancebar config --show-7day-sonnet-resets <true|false>  Show 7-day Sonnet reset time (default: false)
+  glancebar config --resets-time-format <relative|absolute> Reset time display format (default: relative)
+  glancebar config --usage-cache-ttl <seconds>             API cache TTL in seconds (default: 120)
   glancebar config --reset           Reset to default configuration
   glancebar setup                    Show setup instructions
   glancebar --version                Show version
@@ -1722,6 +1794,76 @@ function handleConfig(args: string[]) {
     return;
   }
 
+  // Handle --show-7day-sonnet-limit
+  const show7DaySonnetIndex = args.indexOf("--show-7day-sonnet-limit");
+  if (show7DaySonnetIndex !== -1) {
+    const value = args[show7DaySonnetIndex + 1]?.toLowerCase();
+    if (value !== "true" && value !== "false") {
+      console.error("Error: --show-7day-sonnet-limit must be 'true' or 'false'");
+      process.exit(1);
+    }
+    config.show7DaySonnetLimit = value === "true";
+    saveConfig(config);
+    console.log(`7-day Sonnet limit display ${value === "true" ? "enabled" : "disabled"}`);
+    return;
+  }
+
+  // Handle --show-5hour-resets
+  const show5HourResetsIndex = args.indexOf("--show-5hour-resets");
+  if (show5HourResetsIndex !== -1) {
+    const value = args[show5HourResetsIndex + 1]?.toLowerCase();
+    if (value !== "true" && value !== "false") {
+      console.error("Error: --show-5hour-resets must be 'true' or 'false'");
+      process.exit(1);
+    }
+    config.show5HourResets = value === "true";
+    saveConfig(config);
+    console.log(`5-hour reset time display ${value === "true" ? "enabled" : "disabled"}`);
+    return;
+  }
+
+  // Handle --show-7day-resets
+  const show7DayResetsIndex = args.indexOf("--show-7day-resets");
+  if (show7DayResetsIndex !== -1) {
+    const value = args[show7DayResetsIndex + 1]?.toLowerCase();
+    if (value !== "true" && value !== "false") {
+      console.error("Error: --show-7day-resets must be 'true' or 'false'");
+      process.exit(1);
+    }
+    config.show7DayResets = value === "true";
+    saveConfig(config);
+    console.log(`7-day reset time display ${value === "true" ? "enabled" : "disabled"}`);
+    return;
+  }
+
+  // Handle --show-7day-sonnet-resets
+  const show7DaySonnetResetsIndex = args.indexOf("--show-7day-sonnet-resets");
+  if (show7DaySonnetResetsIndex !== -1) {
+    const value = args[show7DaySonnetResetsIndex + 1]?.toLowerCase();
+    if (value !== "true" && value !== "false") {
+      console.error("Error: --show-7day-sonnet-resets must be 'true' or 'false'");
+      process.exit(1);
+    }
+    config.show7DaySonnetResets = value === "true";
+    saveConfig(config);
+    console.log(`7-day Sonnet reset time display ${value === "true" ? "enabled" : "disabled"}`);
+    return;
+  }
+
+  // Handle --resets-time-format
+  const resetsTimeFormatIndex = args.indexOf("--resets-time-format");
+  if (resetsTimeFormatIndex !== -1) {
+    const value = args[resetsTimeFormatIndex + 1]?.toLowerCase();
+    if (value !== "relative" && value !== "absolute") {
+      console.error("Error: --resets-time-format must be 'relative' or 'absolute'");
+      process.exit(1);
+    }
+    config.resetsTimeFormat = value as "relative" | "absolute";
+    saveConfig(config);
+    console.log(`Resets time format set to ${value}`);
+    return;
+  }
+
   // Handle --usage-cache-ttl
   const cacheTTLIndex = args.indexOf("--usage-cache-ttl");
   if (cacheTTLIndex !== -1) {
@@ -1772,10 +1914,15 @@ Zoho Tasks:
   Max tasks to show:   ${config.maxTasksToShow}
 
 Usage Limits:
-  Show usage limits:   ${config.showUsageLimits ? "enabled" : "disabled"}
-  Show 5-hour limit:   ${config.show5HourLimit ? "enabled" : "disabled"}
-  Show 7-day limit:    ${config.show7DayLimit ? "enabled" : "disabled"}
-  Cache TTL:           ${config.usageLimitsCacheTTL} seconds
+  Show usage limits:        ${config.showUsageLimits ? "enabled" : "disabled"}
+  Show 5-hour limit:        ${config.show5HourLimit ? "enabled" : "disabled"}
+  Show 7-day limit:         ${config.show7DayLimit ? "enabled" : "disabled"}
+  Show 7-day Sonnet limit:  ${config.show7DaySonnetLimit ? "enabled" : "disabled"}
+  Show 5-hour resets:       ${config.show5HourResets ? "enabled" : "disabled"}
+  Show 7-day resets:        ${config.show7DayResets ? "enabled" : "disabled"}
+  Show 7-day Sonnet resets: ${config.show7DaySonnetResets ? "enabled" : "disabled"}
+  Resets time format:       ${config.resetsTimeFormat}
+  Cache TTL:                ${config.usageLimitsCacheTTL} seconds
 `);
 }
 
